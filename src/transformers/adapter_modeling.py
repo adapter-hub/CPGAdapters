@@ -4,6 +4,36 @@ import torch
 from torch import nn
 
 
+class AdapterProperty:
+
+    def __init__(self, name, values, dimension):
+        self.name = name
+        values = sorted(list(values))
+        self.values = {v: i for i, v in enumerate(values)}
+        self.dimension = dimension
+
+
+class AdapterEnvironment:
+
+    def __init__(self, properties):
+        self.properties = properties
+        self.embeddings = {
+                p.name: nn.Embedding(len(p.values), p.dimension)
+                for p in self.properties
+        }
+
+    def get_embedding(self, context):
+        property_embeddings = []
+        for p in self.properties:
+            value = context[p.name]
+            index = p.values[value]
+            property_embeddings.append(
+                    self.embeddings[p.name](torch.LongTensor([index])))
+
+        return torch.cat(property_embeddings, dim=1)
+
+
+
 class Activation_Function_Class(nn.Module):
     """
     Implementation of various activation function.
