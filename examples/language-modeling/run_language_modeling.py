@@ -223,14 +223,15 @@ def main():
             )
             # load a pre-trained from Hub if specified
             if adapter_args.load_adapter:
-                model.load_adapter(
+                model.bert.load_adapter(
                     adapter_args.load_adapter, AdapterType.text_lang, config=adapter_config, load_as=language,
+                    model_name=model_args.model_name_or_path
                 )
             # otherwise, add a fresh adapter
             else:
-                model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
+                model.bert.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
-        model.train_adapter([language])
+        model.bert.train_adapter([language])
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(

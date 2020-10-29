@@ -140,6 +140,7 @@ def main():
 
     # Prepare CONLL-2003 task
     labels = get_labels(data_args.labels)
+    #labels = get_labels(None)
     label_map: Dict[int, str] = {i: label for i, label in enumerate(labels)}
     num_labels = len(labels)
 
@@ -169,6 +170,7 @@ def main():
     )
 
     # Setup adapters
+    adapter_names = None
     if adapter_args.train_adapter:
         task_name = "ner"
         # check if adapter already exists, otherwise add it
@@ -208,7 +210,8 @@ def main():
         model.train_adapter([task_name])
         # Set the adapters to be used in every forward pass
         if lang_adapter_name:
-            model.set_active_adapters([lang_adapter_name, task_name])
+            adapter_names = [[lang_adapter_name], [task_name]]
+            model.set_active_adapters(adapter_names)
         else:
             model.set_active_adapters([task_name])
 
@@ -273,6 +276,7 @@ def main():
         compute_metrics=compute_metrics,
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,
+        adapter_names=adapter_names
     )
 
     # Training
