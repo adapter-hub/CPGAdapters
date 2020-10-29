@@ -198,6 +198,7 @@ def resolve_adapter_config(config: Union[dict, str], local_map=None, try_loading
     Returns:
         dict: The resolved adapter configuration dictionary.
     """
+    logging.info('Resolving adapter config "%s"' % str(config))
     # already a dict, so we don't have to do anything
     if isinstance(config, Mapping):
         return config
@@ -362,6 +363,7 @@ def pull_from_hub(
     if not hub_entry_url:
         raise EnvironmentError("No adapter with name '{}' was found in the adapter index.".format(specifier))
     hub_entry = http_get_json(hub_entry_url)
+    logging.info('hub_entry: ' + str(hub_entry))
 
     # set version
     if not version:

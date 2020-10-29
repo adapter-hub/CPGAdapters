@@ -723,11 +723,11 @@ class Trainer:
         if not isinstance(self.model, PreTrainedModel):
             raise ValueError("Trainer.model appears to not be a PreTrainedModel")
         if self.do_save_adapters:
-            self.model.save_all_adapters(output_dir)
+            self.model.bert.save_all_adapters(output_dir)
         if self.do_save_adapter_fusion:
-            self.model.save_all_adapter_fusions(output_dir)
+            self.model.bert.save_all_adapter_fusions(output_dir)
         if self.do_save_full_model:
-            self.model.save_pretrained(output_dir)
+            self.model.bert.save_pretrained(output_dir)
 
         # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
