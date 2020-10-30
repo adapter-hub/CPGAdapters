@@ -6,38 +6,6 @@ from torch import nn
 import torch.nn.functional as F
 
 
-class CpgProperty:
-
-    def __init__(self, name, values, dimension):
-        self.name = name
-        values = sorted(list(values))
-        self.values = {v: i for i, v in enumerate(values)}
-        self.dim = dim
-
-
-class CpgEnvironment(nn.Module):
-
-    def __init__(self, properties):
-        self.properties = properties
-        self.dim = 0
-        self.embeddings = {}
-        for p in self.properties:
-            embedding = nn.Embedding(len(p.values), p.dim)
-            self.register_parameter(embedding)
-            self.embeddings[p.name] = embedding
-            self.dim += p.dim
-
-    def forward(self, context):
-        property_embeddings = []
-        for p in self.properties:
-            value = context[p.name]
-            index = p.values[value]
-            property_embeddings.append(
-                    self.embeddings[p.name](torch.LongTensor([index])))
-
-        return torch.cat(property_embeddings, dim=1)
-
-
 class CpgModuleConfig:
 
     def __init__(self, context_dim):
