@@ -3,7 +3,7 @@ import math
 import torch
 from torch import nn
 
-import cpg
+from . import cpg
 
 
 class Activation_Function_Class(nn.Module):
@@ -55,7 +55,7 @@ class Adapter(nn.Module):
         add_layer_norm_before=True,
         add_layer_norm_after=False,
         residual_before_ln=True,
-        cpg_environment=None
+        cpg_config=None
     ):
         super().__init__()
 
@@ -63,19 +63,14 @@ class Adapter(nn.Module):
         self.add_layer_norm_before = add_layer_norm_before
         self.add_layer_norm_after = add_layer_norm_after
         self.residual_before_ln = residual_before_ln
-        self.cpg_environment = cpg_environment
-        self.cpg_context = cpg_context
+        self.cpg_config = cpg_config
 
         # list for all modules of the adapter, passed into nn.Sequential()
         seq_list = []
 
         # If we want to have a layer norm on input, we add it to seq_list
         if self.add_layer_norm_before:
-            if self.cpg_environment:
-                self.adapter_norm_before = cpg.LayerNorm(
-                        self.cpg_environment.dim, self.input_size)
-            else:
-                self.adapter_norm_before = nn.LayerNorm(self.input_size)
+            self.adapter_norm_before = nn.LayerNorm(self.input_size)
             seq_list.append(self.adapter_norm_before)
 
         # if a downsample size is not passed, we just half the size of the original input
@@ -84,11 +79,8 @@ class Adapter(nn.Module):
             self.down_sample = self.input_size // 2
 
         # Linear down projection of the input
-        if self.cpg_environment:
-            down_projection = cpg.Linear(
-                    self.cpg_environment.dim, self.input_size, self.down_sample)
-        else:
-            down_projection = nn.Linear(self.input_size, self.down_sample)
+        down_projection = cpg.Linear(
+                self.input_size, self.down_sample, config=self.cpg_config)
         seq_list.append(down_projection)
 
         # select non-linearity
@@ -101,39 +93,26 @@ class Adapter(nn.Module):
 
         # sequential adapter, first downproject, then non-linearity then upsample. In the forward pass we include the
         # residual connection
-        self.adapter_down = nn.Sequential(*seq_list)
+        self.adapter_down = cpg.Sequential(*seq_list, config=self.cpg_config)
 
         # Up projection to input size
-        if self.cpg_environment:
-            self.adapter_up = cpg.Linear(
-                    self.cpg_environment.dim, self.down_sample, self.input_size)
-        else:
-            self.adapter_up = nn.Linear(
-                    self.down_sample, self.input_size)
+        self.adapter_up = cpg.Linear(
+                self.down_sample, self.input_size, config=self.cpg_config)
 
         # If we want to have a layer norm on output, we apply it later after a separate residual connection
         # This means that we learn a new output layer norm, which replaces another layer norm learned in the bert layer
         if self.add_layer_norm_after:
-            if self.cpg_environment:
-                self.adapter_norm_after = cpg.LayerNorm(
-                        self.cpg_environment.dim, self.input_size)
-            else:
-                self.adapter_norm_after = nn.LayerNorm(self.input_size)
+            self.adapter_norm_after = nn.LayerNorm(self.input_size)
 
         # if we want to initialize with the bert strategy then this function is called for all the linear layers
         if init_bert_weights:
             self.adapter_down.apply(self.init_bert_weights)
             self.adapter_up.apply(self.init_bert_weights)
 
-    def forward(self, x, residual_input, cpg_context=None):  # , residual_input=None):
-        if self.cpg_environment:
-            args = [self.cpg_environment(cpg_context)]
-        else:
-            args = []
-            
-        down = self.adapter_down(x, *args)
+    def forward(self, x, residual_input, context_embedding=None):  # , residual_input=None):
+        down = self.adapter_down(x, context_embedding=context_embedding)
 
-        up = self.adapter_up(down, *args)
+        up = self.adapter_up(down, context_embedding=context_embedding)
 
         output = up
 
@@ -366,12 +345,12 @@ class AdapterFusionSentLvlDynamic(nn.Module):
         return result
 
 
-def get_subnet_constructor(non_linearity, reduction_factor):
+def get_subnet_constructor(non_linearity, reduction_factor, cpg_config):
     def subnet(dims_in, dims_out):
-        return nn.Sequential(
-            nn.Linear(dims_in, dims_in // reduction_factor),
+        return cpg.Sequential(
+            cpg.Linear(dims_in, dims_in // reduction_factor, config=cpg_config),
             Activation_Function_Class(non_linearity),
-            nn.Linear(dims_in // reduction_factor, dims_out),
+            cpg.Linear(dims_in // reduction_factor, dims_out, config=cpg_config),
         )
 
     return subnet
@@ -381,9 +360,9 @@ class NICECouplingBlock(nn.Module):
     """Coupling Block following the NICE design."""
 
     def __init__(self, dims_in, dims_c=[], non_linearity="relu",
-                 reduction_factor=2, cpg_environment=None):
+                 reduction_factor=2, cpg_config=None):
         super().__init__()
-        self.cpg_environment = cpg_environment
+        self.cpg_config = cpg_config
 
         channels = dims_in[0][0]
         self.split_len1 = channels // 2
@@ -395,24 +374,25 @@ class NICECouplingBlock(nn.Module):
         self.conditional = len(dims_c) > 0
         condition_length = sum([dims_c[i][0] for i in range(len(dims_c))])
 
-        subnet_constructor = get_subnet_constructor(non_linearity, reduction_factor)
+        subnet_constructor = get_subnet_constructor(
+                non_linearity, reduction_factor, self.cpg_config)
         self.F = subnet_constructor(self.split_len2 + condition_length, self.split_len1)
         self.G = subnet_constructor(self.split_len1 + condition_length, self.split_len2)
 
-    def forward(self, x, c=[], rev=False):
+    def forward(self, x, c=[], rev=False, context_embedding=None):
         # x1, x2 = (x[0].narrow(1, 0, self.split_len1),
         #           x[0].narrow(1, self.split_len1, self.split_len2))
         x1, x2 = (x[:, :, : self.split_len1], x[:, :, self.split_len1 :])
         if not rev:
             x2_c = torch.cat([x2, *c], 1) if self.conditional else x2
-            y1 = x1 + self.F(x2_c)
+            y1 = x1 + self.F(x2_c, context_embedding=context_embedding)
             y1_c = torch.cat([y1, *c], 1) if self.conditional else y1
-            y2 = x2 + self.G(y1_c)
+            y2 = x2 + self.G(y1_c, context_embedding=context_embedding)
         else:
             x1_c = torch.cat([x1, *c], 1) if self.conditional else x1
-            y2 = x2 - self.G(x1_c)
+            y2 = x2 - self.G(x1_c, context_embedding=context_embedding)
             y2_c = torch.cat([y2, *c], 1) if self.conditional else y2
-            y1 = x1 - self.F(y2_c)
+            y1 = x1 - self.F(y2_c, context_embedding=context_embedding)
 
         return torch.cat((y1, y2), -1)
         # return [torch.cat((y1, y2), 1)]

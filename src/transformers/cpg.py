@@ -38,71 +38,96 @@ class CpgEnvironment(nn.Module):
         return torch.cat(property_embeddings, dim=1)
 
 
-class CpgModule(nn.Module):
+class CpgModuleConfig:
 
     def __init__(self, context_dim):
-        super().__init__()
         self.context_dim = context_dim
-        self.cpg_params = []
+        # could have other attributes such as non-linearity to be applied after
+        # matmul
 
-    def add_params(self, name, shape):
-        params = nn.Parameter(torch.Tensor(*shape, self.context_dim))
+
+class CpgModule(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+    def add_param(self, name, shape):
+        if self.config:
+            params = nn.Parameter(
+                    torch.Tensor(*shape, self.config.context_dim))
+        else:
+            params = nn.Parameter(torch.Tensor(*shape))
         self.register_parameter(name, params)
-        self.cpg_params.append(params)
 
-    def eval_params(self, name, context_embedding):
-        return torch.matmul(self.__getattr__(name), context_embedding)
+    def eval_param(self, name, context_embedding=None):
+        if self.config:
+            if context_embedding is None:
+                raise ValueError(
+                        'Tried to evaluate contextually generated parameter %s '
+                        'without supplying context embedding' % name)
+            else:
+                return torch.matmul(self.__getattr__(name), context_embedding)
+        else:
+            return self.__getattr__(name)
 
-    def reset_params(self):
-        std = 1.0 / self.context_dim
-        for params in self.cpg_params:
-            nn.init.normal_(params, b=std)
+    def init_params(self):
+        if not self.config:
+            raise ValueError(
+                    'init_params was called on non-contextually generated '
+                    'module')
+        std = 1.0 / self.config.context_dim
+        for param in self.parameters():
+            nn.init.normal_(param, std=std)
 
 
 class Linear(CpgModule):
 
-    def __init__(self, context_dim, in_features, out_features, bias=True):
-        super().__init__(context_dim)
+    def __init__(self, in_features, out_features, bias=True, config=None):
+        super().__init__(config)
         self.in_features = in_features
         self.out_features = out_features
-        self.has_bias = bias
-        self.add_params('weight', (in_features, out_features))
-        if bias:
-            self.add_params('bias', (out_features,))
-        self.reset_params()
 
-    def forward(self, input, context_embedding):
-        weight = self.eval_params('weight', context_embedding)
-        if self.has_bias:
-            bias = self.eval_params('bias', context_embedding)
+        self.add_param('weight', (out_features, in_features))
+        if bias:
+            self.add_param('bias', (out_features,))
         else:
-            bias = None
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.config:
+            self.init_params()
+        else:
+            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            if self.bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+                bound = 1 / math.sqrt(fan_in)
+                nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input, context_embedding=None):
+        weight = self.eval_param('weight', context_embedding=context_embedding)
+        bias = self.eval_param('bias', context_embedding=context_embedding)
         return F.linear(input, weight, bias)
 
+    def extra_repr(self) -> str:
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
 
-class LayerNorm(CpgModule):
 
-    def __init__(self, context_dim, normalized_shape, eps=1e-5, elementwise_affine=True):
-        super().__init__(context_dim)
-        if isinstance(normalized_shape, numbers.Integral):
-            normalized_shape = (normalized_shape,)
-        self.normalized_shape = tuple(normalized_shape)
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
-        if self.elementwise_affine:
-            self.add_params('weight', normalized_shape)
-            self.add_params('bias', normalized_shape)
-        self.reset_params()
+class Sequential(nn.Module):
 
-    def forward(self, input, context_embedding):
-        if self.elementwise_affine:
-            weight = self.eval_params('weight', context_embedding)
-            bias = self.eval_params('bias', context_embedding)
-        else:
-            weight = None
-            bias = None
+    def __init__(self, *args):
+        for idx, module in enumerate(args):
+            self.add_module(str(idx), module)
 
-        return F.layer_norm(
-                input, self.normalized_shape, weight, bias, self.eps)
-
+    def forward(self, input, context_embedding=None):
+        for module in self._modules.values():
+            if isinstance(module, CpgModule):
+                input = module(input, context_embedding=context_embedding)
+            else:
+                input = module(input)
+        return input
 
