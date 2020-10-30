@@ -3,35 +3,7 @@ import math
 import torch
 from torch import nn
 
-
-class AdapterProperty:
-
-    def __init__(self, name, values, dimension):
-        self.name = name
-        values = sorted(list(values))
-        self.values = {v: i for i, v in enumerate(values)}
-        self.dimension = dimension
-
-
-class AdapterEnvironment:
-
-    def __init__(self, properties):
-        self.properties = properties
-        self.embeddings = {
-                p.name: nn.Embedding(len(p.values), p.dimension)
-                for p in self.properties
-        }
-
-    def get_embedding(self, context):
-        property_embeddings = []
-        for p in self.properties:
-            value = context[p.name]
-            index = p.values[value]
-            property_embeddings.append(
-                    self.embeddings[p.name](torch.LongTensor([index])))
-
-        return torch.cat(property_embeddings, dim=1)
-
+import cpg
 
 
 class Activation_Function_Class(nn.Module):
@@ -83,6 +55,7 @@ class Adapter(nn.Module):
         add_layer_norm_before=True,
         add_layer_norm_after=False,
         residual_before_ln=True,
+        cpg_environment=None
     ):
         super().__init__()
 
@@ -90,13 +63,19 @@ class Adapter(nn.Module):
         self.add_layer_norm_before = add_layer_norm_before
         self.add_layer_norm_after = add_layer_norm_after
         self.residual_before_ln = residual_before_ln
+        self.cpg_environment = cpg_environment
+        self.cpg_context = cpg_context
 
         # list for all modules of the adapter, passed into nn.Sequential()
         seq_list = []
 
         # If we want to have a layer norm on input, we add it to seq_list
         if self.add_layer_norm_before:
-            self.adapter_norm_before = nn.LayerNorm(self.input_size)
+            if self.cpg_environment:
+                self.adapter_norm_before = cpg.LayerNorm(
+                        self.cpg_environment.dim, self.input_size)
+            else:
+                self.adapter_norm_before = nn.LayerNorm(self.input_size)
             seq_list.append(self.adapter_norm_before)
 
         # if a downsample size is not passed, we just half the size of the original input
@@ -105,7 +84,12 @@ class Adapter(nn.Module):
             self.down_sample = self.input_size // 2
 
         # Linear down projection of the input
-        seq_list.append(nn.Linear(self.input_size, self.down_sample))
+        if self.cpg_environment:
+            down_projection = cpg.Linear(
+                    self.cpg_environment.dim, self.input_size, self.down_sample)
+        else:
+            down_projection = nn.Linear(self.input_size, self.down_sample)
+        seq_list.append(down_projection)
 
         # select non-linearity
         # TODO give more options than just relu, or pass the non_linearity directly, not as a string
@@ -120,22 +104,36 @@ class Adapter(nn.Module):
         self.adapter_down = nn.Sequential(*seq_list)
 
         # Up projection to input size
-        self.adapter_up = nn.Linear(self.down_sample, self.input_size)
+        if self.cpg_environment:
+            self.adapter_up = cpg.Linear(
+                    self.cpg_environment.dim, self.down_sample, self.input_size)
+        else:
+            self.adapter_up = nn.Linear(
+                    self.down_sample, self.input_size)
 
         # If we want to have a layer norm on output, we apply it later after a separate residual connection
         # This means that we learn a new output layer norm, which replaces another layer norm learned in the bert layer
         if self.add_layer_norm_after:
-            self.adapter_norm_after = nn.LayerNorm(self.input_size)
+            if self.cpg_environment:
+                self.adapter_norm_after = cpg.LayerNorm(
+                        self.cpg_environment.dim, self.input_size)
+            else:
+                self.adapter_norm_after = nn.LayerNorm(self.input_size)
 
         # if we want to initialize with the bert strategy then this function is called for all the linear layers
         if init_bert_weights:
             self.adapter_down.apply(self.init_bert_weights)
             self.adapter_up.apply(self.init_bert_weights)
 
-    def forward(self, x, residual_input):  # , residual_input=None):
-        down = self.adapter_down(x)
+    def forward(self, x, residual_input, cpg_context=None):  # , residual_input=None):
+        if self.cpg_environment:
+            args = [self.cpg_environment(cpg_context)]
+        else:
+            args = []
+            
+        down = self.adapter_down(x, *args)
 
-        up = self.adapter_up(down)
+        up = self.adapter_up(down, *args)
 
         output = up
 
@@ -382,8 +380,10 @@ def get_subnet_constructor(non_linearity, reduction_factor):
 class NICECouplingBlock(nn.Module):
     """Coupling Block following the NICE design."""
 
-    def __init__(self, dims_in, dims_c=[], non_linearity="relu", reduction_factor=2):
+    def __init__(self, dims_in, dims_c=[], non_linearity="relu",
+                 reduction_factor=2, cpg_environment=None):
         super().__init__()
+        self.cpg_environment = cpg_environment
 
         channels = dims_in[0][0]
         self.split_len1 = channels // 2
