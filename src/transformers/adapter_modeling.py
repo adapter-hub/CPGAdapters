@@ -93,7 +93,7 @@ class Adapter(nn.Module):
 
         # sequential adapter, first downproject, then non-linearity then upsample. In the forward pass we include the
         # residual connection
-        self.adapter_down = cpg.Sequential(*seq_list, config=self.cpg_config)
+        self.adapter_down = cpg.Sequential(*seq_list)
 
         # Up projection to input size
         self.adapter_up = cpg.Linear(

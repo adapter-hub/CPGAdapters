@@ -1,3 +1,4 @@
+import logging
 import math
 
 import numpy as np
@@ -88,6 +89,7 @@ class Linear(CpgModule):
 class Sequential(nn.Module):
 
     def __init__(self, *args):
+        super().__init__()
         for idx, module in enumerate(args):
             self.add_module(str(idx), module)
 
