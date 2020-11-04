@@ -1,12 +1,14 @@
 import logging
 import os
 import pickle
+import random
 import time
 
 import torch
 from filelock import FileLock
-from torch.utils.data.dataset import Dataset
+from torch.utils.data.dataset import Dataset, IterableDataset
 
+from ..data_collator import DataCollatorForLanguageModeling
 from ...tokenization_utils import PreTrainedTokenizer
 
 
@@ -86,49 +88,52 @@ class MonolingualDataset(TextDataset):
         self.batch_size = batch_size
         self.data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer)
 
-    def __iter__(self):
-        def iterator():
-            n_examples = len(self)
-            indices = list(range(n_examples))
-            random.shuffle(indices)
-            for batch_begin in range(0, n_examples - self.batch_size, self.batch_size):
-                batch_end = batch_begin + self.batch_size
-                batch = [torch.tensor(self.examples[indices[i]], dtype=torch.long)
-                         for i in range(batch_begin, batch_end)]
-                batch = self.data_collator(batch)
-                batch['language'] = self.language
-                yield batch
-        
-        return iterator
+    def generator(self):
+        n_examples = len(self)
+        indices = list(range(n_examples))
+        random.shuffle(indices)
+        for batch_begin in range(0, n_examples - self.batch_size, self.batch_size):
+            batch_end = batch_begin + self.batch_size
+            batch = [torch.tensor(self.examples[indices[i]], dtype=torch.long)
+                     for i in range(batch_begin, batch_end)]
+            batch = self.data_collator(batch)
+            batch['language'] = self.language
+            yield batch
 
 
-class MultilingualDataset(Dataset):
+class _MultilingualDatasetIterator:
+
+    def __init__(self, ml_dataset):
+        self.monolingual_generators = [dataset.generator() for dataset in ml_dataset.datasets.values()]
+        self.current = 0
+
+    def __next__(self):
+        batch = next(self.monolingual_generators[self.current])
+        self.current = (self.current + 1) % len(self.monolingual_generators)
+        return batch
+
+
+class MultilingualDataset(IterableDataset):
 
     def __init__(
         self, tokenizer: PreTrainedTokenizer, files_by_language, block_size, batch_size, overwrite_cache=False,
     ):
+        languages = ', '.join(sorted(list(files_by_language.keys())))
+        logging.info('Initialising multilingual dataset with languages ' + languages)
         self.datasets = {
                 language: MonolingualDataset(tokenizer, file_path, block_size, language,
                                              batch_size, overwrite_cache=overwrite_cache)
                 for language, file_path in files_by_language.items()
         }
 
-        self.length = min(len(dataset) for dataset in self.datasets.values()) // batch_size
+        self.length = len(self.datasets) * (
+                min(len(dataset) for dataset in self.datasets.values()) // batch_size)
 
     def __len__(self):
         return self.length
 
     def __iter__(self):
-        def iterator():
-            monolingual_iterators = [iter(dataset) for dataset in self.datasets.values()]
-            while True:
-                for dataset in monolingual_iterators:
-                    try:
-                        yield next(dataset)
-                    except StopIteration:
-                        return
-
-        return iterator
+        return _MultilingualDatasetIterator(self)
 
 
 class LineByLineTextDataset(Dataset):

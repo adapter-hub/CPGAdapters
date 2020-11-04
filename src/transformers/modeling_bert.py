@@ -290,7 +290,7 @@ class BertSelfOutput(nn.Module, BertSelfOutputAdaptersMixin):
         hidden_states = self.adapters_forward(
                 hidden_states, input_tensor,
                 adapter_names=adapter_names,
-                cpg_environment=cpg_environment,
+                cpg_environments=cpg_environments,
                 language=language,
                 layer_num=layer_num)
         return hidden_states
@@ -371,10 +371,25 @@ class BertOutput(nn.Module, BertOutputAdaptersMixin):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self._init_adapter_modules()
 
-    def forward(self, hidden_states, input_tensor, adapter_names=None):
+    def forward(
+            self,
+            hidden_states,
+            input_tensor,
+            adapter_names=None,
+            cpg_environments=None,
+            language=None,
+            layer_num=None
+    ):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.adapters_forward(hidden_states, input_tensor, adapter_names)
+        hidden_states = self.adapters_forward(
+                hidden_states,
+                input_tensor,
+                adapter_names=adapter_names,
+                cpg_environments=cpg_environments,
+                language=language,
+                layer_num=layer_num
+        )
         return hidden_states
 
 
@@ -425,7 +440,14 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
             outputs = outputs + cross_attention_outputs[1:]  # add cross attentions if we output attention weights
 
         intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output, adapter_names=adapter_names)
+        layer_output = self.output(
+                intermediate_output,
+                attention_output,
+                adapter_names=adapter_names,
+                cpg_environments=cpg_environments,
+                language=language,
+                layer_num=layer_num
+        )
         outputs = (layer_output,) + outputs
         return outputs
 
@@ -1180,6 +1202,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         encoder_attention_mask=None,
         output_attentions=None,
         output_hidden_states=None,
+        language=None,
         **kwargs
     ):
         r"""
@@ -1229,6 +1252,7 @@ class BertForMaskedLM(BertPreTrainedModel):
             encoder_attention_mask=encoder_attention_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            language=language
         )
 
         sequence_output = outputs[0]

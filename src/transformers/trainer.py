@@ -19,6 +19,7 @@ from torch.utils.data.sampler import RandomSampler, Sampler, SequentialSampler
 from tqdm.auto import tqdm, trange
 
 from .adapter_bert import get_fusion_regularization_loss
+from .data.datasets.language_modeling import MultilingualDataset
 from .data.data_collator import DataCollator, default_data_collator
 from .file_utils import is_apex_available, is_torch_tpu_available
 from .modeling_utils import PreTrainedModel
@@ -853,7 +854,7 @@ class Trainer:
         # Note: in torch.distributed mode, there's no point in wrapping the model
         # inside a DistributedDataParallel as we'll be under `no_grad` anyways.
 
-        batch_size = dataloader.batch_size
+        batch_size = dataloader.batch_size or -1
         logger.info("***** Running %s *****", description)
         logger.info("  Num examples = %d", self.num_examples(dataloader))
         logger.info("  Batch size = %d", batch_size)

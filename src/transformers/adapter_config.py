@@ -41,12 +41,6 @@ class CpgConfig(Mapping):
     def __len__(self):
         return len(self.__dict__)
 
-    def to_cpg_module_config(self, include_layer=True):
-        d = self.language_embedding_dim
-        if self.user_layer_embedding and include_layer:
-            d += self.layer_embedding_dim
-        return cpg.CpgModuleConfig(d)
-
 
 @dataclass
 class InvertibleAdapterConfig(Mapping):
@@ -180,12 +174,12 @@ class TestCpgConfig(AdapterConfig):
         block_type="nice", non_linearity="relu", reduction_factor=2
     )
     cpg: Optional[CpgConfig] = CpgConfig(
-        language_embedding_size=8,
+        language_embedding_dim=8,
         languages=[
-                'ar', 'bg', 'da', 'de', 'en', 'es', 'et',
-                'fa', 'fr', 'hr', 'it', 'ko', 'nl', 'ru', 'zh'],
+                'ar', 'bg', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'hr', 'it',
+                'ja', 'jv', 'ko', 'my', 'nl', 'qu', 'ru', 'sw', 'zh'],
         use_layer_embedding=True,
-        layer_embedding_size=8)
+        layer_embedding_dim=8)
 
 
 @dataclass

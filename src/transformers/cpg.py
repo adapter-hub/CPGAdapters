@@ -10,13 +10,19 @@ import torch.nn.functional as F
 class Property(nn.Module):
 
     def __init__(self, name, dim, values):
+        super().__init__()
+        logging.info('Initialising CPG property "%s" with dim %d and values %s' % (
+                name, dim, ', '.join(values)))
         self.name = name
         self.dim = dim
+        std = 1.0 / self.dim
         for value in values:
             name = value + '_embedding'
-            self.register_parameter(name, nn.Parameter(self.dim)
+            embedding = nn.Parameter(torch.Tensor(self.dim))
+            nn.init.normal_(embedding, std=std)
+            self.register_parameter(name, embedding)
 
-    def forward(value):
+    def forward(self, value):
         name = value + '_embedding'
         return self.__getattr__(name)
 
@@ -24,6 +30,7 @@ class Property(nn.Module):
 class Environment(nn.Module):
 
     def __init__(self, properties):
+        super().__init__()
         self.properties = properties
         self.dim = 0
         for p in properties:
@@ -35,15 +42,17 @@ class Environment(nn.Module):
         for p in self.properties:
             if p.name in context:
                 value = context[p.name]
-                property_embeddings.append(p.forward(value))
+                property_embeddings.append(p(value))
 
         return torch.cat(property_embeddings, dim=0)
 
 
 class CpgModuleConfig:
 
-    def __init__(self, context_dim):
-        self.context_dim = context_dim
+    def __init__(self, cpg_config, include_layer=True):
+        self.context_dim = cpg_config['language_embedding_dim']
+        if cpg_config['use_layer_embedding'] and include_layer:
+            self.context_dim += cpg_config['layer_embedding_dim']
         # could have other attributes such as non-linearity to be applied after
         # matmul
 

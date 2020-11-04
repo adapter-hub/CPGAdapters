@@ -122,20 +122,32 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, training_args, tokenizer: PreTrainedTokenizer, evaluate=False):
+def get_dataset(args: DataTrainingArguments, training_args, tokenizer: PreTrainedTokenizer,
+                batch_size=None, evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
 
     if args.multilingual:
         files_by_language = {}
         with open(file_path, 'r') as f:
             for line in f:
-                language, path = line.strip().split()
+                line = line.strip()
+                if not line:
+                    continue
+                language, path = line.split()
                 if not os.path.isabs(path):
                     path = os.path.join(os.path.dirname(file_path), path)
                 files_by_language[language] = path
-        return MultilingualDataset(
-                tokenizer, files_by_language, args.block_size,
-                training_args.batch_size, overwrite_cache=args.overwrite_cache)
+        if evaluate:
+            return {
+                    language: MultilingualDataset(
+                            tokenizer, {language: file_path}, args.block_size,
+                            batch_size, overwrite_cache=args.overwrite_cache)
+                    for language, file_path in files_by_language.items()
+            }
+        else:
+            return MultilingualDataset(
+                    tokenizer, files_by_language, args.block_size,
+                    batch_size, overwrite_cache=args.overwrite_cache)
 
     if args.line_by_line:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
@@ -264,8 +276,12 @@ def main():
 
     # Get datasets
 
-    train_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer) if training_args.do_train else None
-    eval_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
+    if training_args.do_train:
+        train_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer,
+                                    batch_size=training_args.per_device_train_batch_size)
+    else:
+        train_dataset = None
+    eval_dataset = None
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )
@@ -301,20 +317,28 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        eval_output = trainer.evaluate()
+        eval_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer,
+                                   batch_size=training_args.per_device_eval_batch_size, evaluate=True)
+        if not isinstance(eval_dataset, dict):
+            language = adapter_args.language or 'unknown_language'
+            eval_dataset = {language: eval_dataset}
+        for language, dataset in eval_dataset.items():
+            logging.info('Evaluating on %s dataset' % language)
+            eval_output = trainer.evaluate(dataset)
 
-        perplexity = math.exp(eval_output["eval_loss"])
-        result = {"perplexity": perplexity}
+            perplexity = math.exp(eval_output["eval_loss"])
+            result = {language + "_perplexity": perplexity}
+            logging.info(result)
+            results.update(result)
 
         output_eval_file = os.path.join(training_args.output_dir, "eval_results_lm.txt")
         if trainer.is_world_master():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
-                for key in sorted(result.keys()):
+                for key in sorted(results.keys()):
                     logger.info("  %s = %s", key, str(result[key]))
                     writer.write("%s = %s\n" % (key, str(result[key])))
 
-        results.update(result)
 
     return results
 
