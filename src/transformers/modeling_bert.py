@@ -283,10 +283,16 @@ class BertSelfOutput(nn.Module, BertSelfOutputAdaptersMixin):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self._init_adapter_modules()
 
-    def forward(self, hidden_states, input_tensor, adapter_names=None):
+    def forward(self, hidden_states, input_tensor,
+                adapter_names=None, cpg_environments=None, language=None, layer_num=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.adapters_forward(hidden_states, input_tensor, adapter_names=adapter_names)
+        hidden_states = self.adapters_forward(
+                hidden_states, input_tensor,
+                adapter_names=adapter_names,
+                cpg_environment=cpg_environment,
+                language=language,
+                layer_num=layer_num)
         return hidden_states
 
 
@@ -324,11 +330,18 @@ class BertAttention(nn.Module):
         encoder_attention_mask=None,
         output_attentions=False,
         adapter_names=None,
+        cpg_environments=None,
+        language=None,
+        layer_num=None
     ):
         self_outputs = self.self(
             hidden_states, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask, output_attentions,
         )
-        attention_output = self.output(self_outputs[0], hidden_states, adapter_names=adapter_names)
+        attention_output = self.output(self_outputs[0], hidden_states,
+                                       adapter_names=adapter_names,
+                                       cpg_environments=cpg_environments,
+                                       language=language,
+                                       layer_num=layer_num)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
@@ -384,9 +397,17 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
         encoder_attention_mask=None,
         output_attentions=False,
         adapter_names=None,
+        cpg_environments=None,
+        language=None,
+        layer_num=None,
     ):
         self_attention_outputs = self.attention(
-            hidden_states, attention_mask, head_mask, output_attentions=output_attentions, adapter_names=adapter_names,
+            hidden_states, attention_mask, head_mask,
+            output_attentions=output_attentions,
+            adapter_names=adapter_names,
+            cpg_environments=cpg_environments,
+            language=language,
+            layer_num=layer_num
         )
         attention_output = self_attention_outputs[0]
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
@@ -425,6 +446,8 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
         output_attentions=False,
         output_hidden_states=False,
         adapter_names=None,
+        cpg_environments=None,
+        language=None
     ):
         all_hidden_states = ()
         all_attentions = ()
@@ -448,6 +471,9 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
                     encoder_hidden_states,
                     encoder_attention_mask,
                     adapter_names=adapter_names,
+                    cpg_environments=cpg_environments,
+                    language=language,
+                    layer_num=i,
                 )
             else:
                 layer_outputs = layer_module(
@@ -458,6 +484,9 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
                     encoder_attention_mask,
                     output_attentions,
                     adapter_names=adapter_names,
+                    cpg_environments=cpg_environments,
+                    language=language,
+                    layer_num=i,
                 )
             hidden_states = layer_outputs[0]
 
@@ -705,6 +734,7 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None
     ):
         r"""
     Return:
@@ -789,7 +819,14 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
             adapter_names = parse_adapter_names(adapter_names)
 
             if adapter_names[0][0] in self.invertible_lang_adapters:
-                embedding_output = self.invertible_lang_adapters[adapter_names[0][0]](embedding_output, rev=False)
+                adapter_name = adapter_names[0][0]
+                if adapter_name in self.cpg_environments:
+                    if language is None:
+                        raise ValueError('language must be specified when CPG is active')
+                    context = {'language': language}
+                    context_embedding = self.cpg_environments[adapter_name](context)
+                embedding_output = self.invertible_lang_adapters[adapter_name](
+                        embedding_output, rev=False, context_embedding=context_embedding)
 
         encoder_outputs = self.encoder(
             embedding_output,
@@ -800,6 +837,8 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             adapter_names=adapter_names,
+            cpg_environments=self.cpg_environments,
+            language=language
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
@@ -837,6 +876,7 @@ class BertModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
         head=None,
     ):
         input_ids = input_ids.view(-1, input_ids.size(-1)) if input_ids is not None else None
@@ -854,6 +894,7 @@ class BertModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             adapter_names=adapter_names,
+            language=language,
         )
 
         outputs = self.forward_head(outputs, head_name=head, attention_mask=attention_mask, labels=labels,)
@@ -1019,6 +1060,7 @@ class BertLMHeadModel(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
         **kwargs
     ):
         r"""
@@ -1076,15 +1118,10 @@ class BertLMHeadModel(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             adapter_names=adapter_names,
+            language=language,
         )
 
         sequence_output = outputs[0]
-        # TODO assume that first elem is language
-        if adapter_names is not None:
-            adapter_names = parse_adapter_names(adapter_names)
-            language = adapter_names[0][0]
-        else:
-            language = None
 
         prediction_scores = self.cls(
             sequence_output, inv_lang_adapter=self.bert.get_invertible_lang_adapter(language),

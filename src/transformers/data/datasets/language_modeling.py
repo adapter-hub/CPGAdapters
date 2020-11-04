@@ -75,6 +75,62 @@ class TextDataset(Dataset):
         return torch.tensor(self.examples[i], dtype=torch.long)
 
 
+class MonolingualDataset(TextDataset):
+
+    def __init__(
+        self, tokenizer, file_path, block_size, language, batch_size, overwrite_cache=False,
+    ):
+        super().__init__(tokenizer, file_path, block_size, overwrite_cache=overwrite_cache)
+        logging.info('Initialised %s dataset with %d examples' % (language, len(self)))
+        self.language = language
+        self.batch_size = batch_size
+        self.data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer)
+
+    def __iter__(self):
+        def iterator():
+            n_examples = len(self)
+            indices = list(range(n_examples))
+            random.shuffle(indices)
+            for batch_begin in range(0, n_examples - self.batch_size, self.batch_size):
+                batch_end = batch_begin + self.batch_size
+                batch = [torch.tensor(self.examples[indices[i]], dtype=torch.long)
+                         for i in range(batch_begin, batch_end)]
+                batch = self.data_collator(batch)
+                batch['language'] = self.language
+                yield batch
+        
+        return iterator
+
+
+class MultilingualDataset(Dataset):
+
+    def __init__(
+        self, tokenizer: PreTrainedTokenizer, files_by_language, block_size, batch_size, overwrite_cache=False,
+    ):
+        self.datasets = {
+                language: MonolingualDataset(tokenizer, file_path, block_size, language,
+                                             batch_size, overwrite_cache=overwrite_cache)
+                for language, file_path in files_by_language.items()
+        }
+
+        self.length = min(len(dataset) for dataset in self.datasets.values()) // batch_size
+
+    def __len__(self):
+        return self.length
+
+    def __iter__(self):
+        def iterator():
+            monolingual_iterators = [iter(dataset) for dataset in self.datasets.values()]
+            while True:
+                for dataset in monolingual_iterators:
+                    try:
+                        yield next(dataset)
+                    except StopIteration:
+                        return
+
+        return iterator
+
+
 class LineByLineTextDataset(Dataset):
     """
     This will be superseded by a framework-agnostic approach

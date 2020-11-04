@@ -6,10 +6,46 @@ from dataclasses import FrozenInstanceError, asdict, dataclass, field, is_datacl
 from os.path import isfile
 from typing import List, Optional, Union
 
+from . import cpg
 from .adapter_utils import AdapterType, get_adapter_config_hash, resolve_adapter_config
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CpgConfig(Mapping):
+
+    language_embedding_dim: int
+    languages: List[str]
+    use_layer_embedding: bool
+    layer_embedding_dim: int
+
+    # we want to emulate a simple form of immutability while keeping the ability to add custom attributes.
+    # therefore, we don't allow changing attribute values if set once.
+    def __setattr__(self, name, value):
+        if name in self.__dict__:
+            raise frozeninstanceerror()
+        else:
+            object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        raise frozeninstanceerror()
+
+    def __getitem__(self, key):
+        return self.__dict__[key]
+
+    def __iter__(self):
+        return iter(self.__dict__)
+
+    def __len__(self):
+        return len(self.__dict__)
+
+    def to_cpg_module_config(self, include_layer=True):
+        d = self.language_embedding_dim
+        if self.user_layer_embedding and include_layer:
+            d += self.layer_embedding_dim
+        return cpg.CpgModuleConfig(d)
 
 
 @dataclass
@@ -20,16 +56,16 @@ class InvertibleAdapterConfig(Mapping):
     non_linearity: str
     reduction_factor: int
 
-    # We want to emulate a simple form of immutability while keeping the ability to add custom attributes.
-    # Therefore, we don't allow changing attribute values if set once.
+    # we want to emulate a simple form of immutability while keeping the ability to add custom attributes.
+    # therefore, we don't allow changing attribute values if set once.
     def __setattr__(self, name, value):
         if name in self.__dict__:
-            raise FrozenInstanceError()
+            raise frozeninstanceerror()
         else:
             object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        raise FrozenInstanceError()
+        raise frozeninstanceerror()
 
     def __getitem__(self, key):
         return self.__dict__[key]
@@ -52,10 +88,12 @@ class AdapterConfig(Mapping):
     ln_before: bool
     ln_after: bool
     mh_adapter: bool
+    share_across_layers: bool
     output_adapter: bool
     non_linearity: str
     reduction_factor: int
     invertible_adapter: Optional[InvertibleAdapterConfig] = None
+    cpg: Optional[CpgConfig] = None
     leave_out: List[int] = field(default_factory=list)
 
     # We want to emulate a simple form of immutability while keeping the ability to add custom attributes.
@@ -121,6 +159,36 @@ class AdapterConfig(Mapping):
 
 
 @dataclass
+class TestCpgConfig(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = False
+    non_linearity: str = "relu"
+    reduction_factor: int = 16
+    invertible_adapter: Optional[dict] = InvertibleAdapterConfig(
+        block_type="nice", non_linearity="relu", reduction_factor=2
+    )
+    cpg: Optional[CpgConfig] = CpgConfig(
+        language_embedding_size=8,
+        languages=[
+                'ar', 'bg', 'da', 'de', 'en', 'es', 'et',
+                'fa', 'fr', 'hr', 'it', 'ko', 'nl', 'ru', 'zh'],
+        use_layer_embedding=True,
+        layer_embedding_size=8)
+
+
+@dataclass
 class PfeifferConfig(AdapterConfig):
     """
     The adapter architecture proposed by Pfeiffer et. al., 2020.
@@ -135,6 +203,7 @@ class PfeifferConfig(AdapterConfig):
     ln_after: bool = False
     mh_adapter: bool = False
     output_adapter: bool = True
+    share_across_layers: bool = False
     non_linearity: str = "relu"
     reduction_factor: int = 16
     invertible_adapter: Optional[dict] = InvertibleAdapterConfig(
@@ -157,11 +226,16 @@ class HoulsbyConfig(AdapterConfig):
     ln_after: bool = False
     mh_adapter: bool = True
     output_adapter: bool = True
+    share_across_layers: bool = False
     non_linearity: str = "swish"
     reduction_factor: int = 16
 
 
-ADAPTER_CONFIG_MAP = {"pfeiffer": PfeifferConfig(), "houlsby": HoulsbyConfig()}
+ADAPTER_CONFIG_MAP = {
+        "pfeiffer": PfeifferConfig(),
+        "houlsby": HoulsbyConfig(),
+        "cpg": TestCpgConfig()
+}
 
 DEFAULT_ADAPTER_CONFIG = "pfeiffer"
 

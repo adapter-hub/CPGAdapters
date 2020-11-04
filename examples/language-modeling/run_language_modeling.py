@@ -38,6 +38,7 @@ from transformers import (
     DataCollatorForLanguageModeling,
     HfArgumentParser,
     LineByLineTextDataset,
+    MultilingualDataset,
     PreTrainedTokenizer,
     TextDataset,
     Trainer,
@@ -97,6 +98,9 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "Whether distinct lines of text in the dataset are to be handled as distinct sequences."},
     )
+    multilingual: bool = field(
+        default=False, metadata={"help": "Whether to train on several languages simultaneously."}
+    )
 
     mlm: bool = field(
         default=False, metadata={"help": "Train with masked-language modeling loss instead of language modeling."}
@@ -118,8 +122,21 @@ class DataTrainingArguments:
     )
 
 
-def get_dataset(args: DataTrainingArguments, tokenizer: PreTrainedTokenizer, evaluate=False):
+def get_dataset(args: DataTrainingArguments, training_args, tokenizer: PreTrainedTokenizer, evaluate=False):
     file_path = args.eval_data_file if evaluate else args.train_data_file
+
+    if args.multilingual:
+        files_by_language = {}
+        with open(file_path, 'r') as f:
+            for line in f:
+                language, path = line.strip().split()
+                if not os.path.isabs(path):
+                    path = os.path.join(os.path.dirname(file_path), path)
+                files_by_language[language] = path
+        return MultilingualDataset(
+                tokenizer, files_by_language, args.block_size,
+                training_args.batch_size, overwrite_cache=args.overwrite_cache)
+
     if args.line_by_line:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
     else:
@@ -247,8 +264,8 @@ def main():
 
     # Get datasets
 
-    train_dataset = get_dataset(data_args, tokenizer=tokenizer) if training_args.do_train else None
-    eval_dataset = get_dataset(data_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
+    train_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer) if training_args.do_train else None
+    eval_dataset = get_dataset(data_args, training_args, tokenizer=tokenizer, evaluate=True) if training_args.do_eval else None
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=data_args.mlm, mlm_probability=data_args.mlm_probability
     )

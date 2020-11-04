@@ -7,6 +7,39 @@ from torch import nn
 import torch.nn.functional as F
 
 
+class Property(nn.Module):
+
+    def __init__(self, name, dim, values):
+        self.name = name
+        self.dim = dim
+        for value in values:
+            name = value + '_embedding'
+            self.register_parameter(name, nn.Parameter(self.dim)
+
+    def forward(value):
+        name = value + '_embedding'
+        return self.__getattr__(name)
+
+
+class Environment(nn.Module):
+
+    def __init__(self, properties):
+        self.properties = properties
+        self.dim = 0
+        for p in properties:
+            self.dim += p.dim
+            self.add_module(p.name, p)
+
+    def forward(self, context):
+        property_embeddings = []
+        for p in self.properties:
+            if p.name in context:
+                value = context[p.name]
+                property_embeddings.append(p.forward(value))
+
+        return torch.cat(property_embeddings, dim=0)
+
+
 class CpgModuleConfig:
 
     def __init__(self, context_dim):

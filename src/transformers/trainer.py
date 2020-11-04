@@ -242,20 +242,27 @@ class Trainer:
         """
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
-        if is_torch_tpu_available():
-            train_sampler = get_tpu_sampler(self.train_dataset)
+        if isinstance(self.train_dataset, MultilingualDataset):
+            train_sampler = None
+            collate_fn = None
+            batch_size = None
         else:
-            train_sampler = (
-                RandomSampler(self.train_dataset)
-                if self.args.local_rank == -1
-                else DistributedSampler(self.train_dataset)
-            )
+            if is_torch_tpu_available():
+                train_sampler = get_tpu_sampler(self.train_dataset)
+            else:
+                train_sampler = (
+                    RandomSampler(self.train_dataset)
+                    if self.args.local_rank == -1
+                    else DistributedSampler(self.train_dataset)
+                )
+            collate_fn = self.data_collator
+            batch_size = self.args.train_batch_size
 
         data_loader = DataLoader(
             self.train_dataset,
-            batch_size=self.args.train_batch_size,
+            batch_size=batch_size,
             sampler=train_sampler,
-            collate_fn=self.data_collator,
+            collate_fn=collate_fn,
             drop_last=self.args.dataloader_drop_last,
         )
 
@@ -274,20 +281,27 @@ class Trainer:
 
         eval_dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
 
-        if is_torch_tpu_available():
-            sampler = SequentialDistributedSampler(
-                eval_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal()
-            )
-        elif self.args.local_rank != -1:
-            sampler = SequentialDistributedSampler(eval_dataset)
+        if isinstance(eval_dataset, MultilingualDataset):
+            sampler = None
+            collate_fn = None
+            batch_size = None
         else:
-            sampler = SequentialSampler(eval_dataset)
+            if is_torch_tpu_available():
+                sampler = SequentialDistributedSampler(
+                    eval_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal()
+                )
+            elif self.args.local_rank != -1:
+                sampler = SequentialDistributedSampler(eval_dataset)
+            else:
+                sampler = SequentialSampler(eval_dataset)
+            collate_fn = self.data_collator
+            batch_size = self.args.eval_batch_size
 
         data_loader = DataLoader(
             eval_dataset,
             sampler=sampler,
-            batch_size=self.args.eval_batch_size,
-            collate_fn=self.data_collator,
+            batch_size=batch_size,
+            collate_fn=collate_fn,
             drop_last=self.args.dataloader_drop_last,
         )
 
@@ -301,20 +315,27 @@ class Trainer:
             test_dataset (obj:`Dataset`): The test dataset to use.
         """
         # We use the same batch_size as for eval.
-        if is_torch_tpu_available():
-            sampler = SequentialDistributedSampler(
-                test_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal()
-            )
-        elif self.args.local_rank != -1:
-            sampler = SequentialDistributedSampler(test_dataset)
+        if isinstance(test_dataset, MultilingualDataset):
+            sampler = None
+            collate_fn = None
+            batch_size = None
         else:
-            sampler = SequentialSampler(test_dataset)
+            if is_torch_tpu_available():
+                sampler = SequentialDistributedSampler(
+                    test_dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal()
+                )
+            elif self.args.local_rank != -1:
+                sampler = SequentialDistributedSampler(test_dataset)
+            else:
+                sampler = SequentialSampler(test_dataset)
+            collate_fn = self.data_collator
+            batch_size = self.args.eval_batch_size
 
         data_loader = DataLoader(
             test_dataset,
             sampler=sampler,
-            batch_size=self.args.eval_batch_size,
-            collate_fn=self.data_collator,
+            batch_size=batch_size,
+            collate_fn=collate_fn,
             drop_last=self.args.dataloader_drop_last,
         )
 

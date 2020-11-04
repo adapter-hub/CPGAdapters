@@ -48,6 +48,10 @@ class BertSelfOutputAdaptersMixin:
     def add_adapter(self, adapter_name: str, adapter_type: AdapterType):
         adapter_config = self.config.adapters.get(adapter_name)
         if adapter_config and adapter_config["mh_adapter"]:
+            if adapter_config.cpg:
+                cpg_config = adapter_config.cpg.to_cpg_module_config()
+            else:
+                cpg_config = None
             adapter = Adapter(
                 input_size=self.config.hidden_size,
                 down_sample=self.config.hidden_size // adapter_config["reduction_factor"],
@@ -55,6 +59,7 @@ class BertSelfOutputAdaptersMixin:
                 add_layer_norm_after=adapter_config["ln_after"],
                 non_linearity=adapter_config["non_linearity"],
                 residual_before_ln=adapter_config["adapter_residual_before_ln"],
+                cpg_config=cpg_config
             )
             if adapter_type == AdapterType.text_task:
                 self.attention_text_task_adapters[adapter_name] = adapter
@@ -141,7 +146,7 @@ class BertSelfOutputAdaptersMixin:
             return self.attention_text_task_adapters[adapter_name]
         return None
 
-    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack):
+    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack, context_embedding=None):
         """
         One layer of stacked adapters. This either passes through a single adapter and prepares the data to be passed
         into a subsequent adapter, or the next transformer layer
@@ -167,7 +172,8 @@ class BertSelfOutputAdaptersMixin:
 
             adapter_layer = self.get_adapter_layer(adapter_stack[0])
             if adapter_layer is not None:
-                hidden_states, _, _ = adapter_layer(hidden_states, residual_input=residual)
+                hidden_states, _, _ = adapter_layer(
+                        hidden_states, residual_input=residual, context_embedding=context_embedding)
 
             return hidden_states
 
@@ -206,7 +212,8 @@ class BertSelfOutputAdaptersMixin:
             hidden_states = self.adapter_fusion_layer[fusion_name](query, up_list, up_list, residual,)
         return hidden_states
 
-    def adapters_forward(self, hidden_states, input_tensor, adapter_names=None):
+    def adapters_forward(self, hidden_states, input_tensor, adapter_names=None,
+                         cpg_environments=None, language=None, layer_num=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -219,10 +226,17 @@ class BertSelfOutputAdaptersMixin:
             )
             > 0
         ):
-
             for adapter_stack in adapter_names:
+                if cpg_environments and adapter_stack in cpg_environments:
+                    assert language
+                    assert layer_num
+                    context = {'language': language, 'layer': 'layer_' + str(layer_num)}
+                    context_embedding = cpg_environments[adapter_stack](context)
+                else:
+                    context_embedding = None
+
                 hidden_states = self.adapter_stack_layer(
-                    hidden_states=hidden_states, input_tensor=input_tensor, adapter_stack=adapter_stack,
+                    hidden_states, input_tensor, adapter_stack, context_embedding=context_embedding
                 )
 
             last_config = self.config.adapters.get(adapter_names[-1][-1])
@@ -255,6 +269,10 @@ class BertOutputAdaptersMixin:
     def add_adapter(self, adapter_name: str, adapter_type: AdapterType):
         adapter_config = self.config.adapters.get(adapter_name)
         if adapter_config and adapter_config["output_adapter"]:
+            if adapter_config.cpg:
+                cpg_config = adapter_config.cpg.to_cpg_module_config()
+            else:
+                cpg_config = None
             adapter = Adapter(
                 input_size=self.config.hidden_size,
                 down_sample=self.config.hidden_size // adapter_config["reduction_factor"],
@@ -262,6 +280,7 @@ class BertOutputAdaptersMixin:
                 add_layer_norm_after=adapter_config["ln_after"],
                 non_linearity=adapter_config["non_linearity"],
                 residual_before_ln=adapter_config["adapter_residual_before_ln"],
+                cpg_config=cpg_config
             )
             if adapter_type == AdapterType.text_task:
                 self.layer_text_task_adapters[adapter_name] = adapter
@@ -337,7 +356,7 @@ class BertOutputAdaptersMixin:
             return self.layer_text_task_adapters[adapter_name]
         return None
 
-    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack):
+    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack, context_embedding=None):
         """
         One layer of stacked adapters. This either passes through a single adapter and prepares the data to be passed
         into a subsequent adapter, or the next transformer layer
@@ -363,7 +382,8 @@ class BertOutputAdaptersMixin:
 
             adapter_layer = self.get_adapter_layer(adapter_stack[0])
             if adapter_layer is not None:
-                hidden_states, _, _ = adapter_layer(hidden_states, residual_input=residual)
+                hidden_states, _, _ = adapter_layer(
+                        hidden_states, residual_input=residual, context_embedding=context_embedding)
 
             return hidden_states
 
@@ -403,7 +423,11 @@ class BertOutputAdaptersMixin:
             hidden_states = self.adapter_fusion_layer[fusion_name](query, up_list, up_list, residual)
         return hidden_states
 
-    def adapters_forward(self, hidden_states, input_tensor, adapter_names=None):
+    def adapters_forward(self, hidden_states, input_tensor,
+                         adapter_names=None,
+                         cpg_environments=None,
+                         language=None,
+                         layer_num=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -419,8 +443,16 @@ class BertOutputAdaptersMixin:
         ):
 
             for adapter_stack in adapter_names:
+                if cpg_environments and adapter_stack in cpg_environments:
+                    assert language
+                    assert layer_num
+                    context = {'language': language, 'layer': 'layer_' + str(layer_num)}
+                    context_embedding = cpg_environments[adapter_stack](context)
+                else:
+                    context_embedding = None
+
                 hidden_states = self.adapter_stack_layer(
-                    hidden_states=hidden_states, input_tensor=input_tensor, adapter_stack=adapter_stack,
+                    hidden_states, input_tensor, adapter_stack, context_embedding=context_embedding
                 )
 
             last_config = self.config.adapters.get(adapter_names[-1][-1])
@@ -478,6 +510,7 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
         super().__init__(*args, **kwargs)
 
     def _init_adapter_modules(self):
+        self.cpg_environments = nn.ModuleDict(dict())
         self.invertible_lang_adapters = nn.ModuleDict(dict())
 
         # language adapters
@@ -531,20 +564,41 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
             raise ValueError("Invalid adapter type {}".format(adapter_type))
         if not self.config.adapters.get_config(adapter_type):
             self.config.adapters.set_config(adapter_type, config or DEFAULT_ADAPTER_CONFIG)
+        config = self.config.adapters.get_config(adapter_type)
         self.config.adapters.add(adapter_name, adapter_type, config=config)
+        if adapter_type == AdapterType.text_lang and config.cpg:
+            self.add_cpg_environment(adapter_name, adapter_type, config.cpg)
         self.encoder.add_adapter(adapter_name, adapter_type)
         if adapter_type == AdapterType.text_lang:
             self.add_invertible_lang_adapter(adapter_name)
+
+    def add_cpg_environment(self, adapter_name, cpg_config):
+        properties = []
+        properties.append(cpg.Property(
+                'language', cpg_config.language_embedding_dim, cpg_config.languages))
+        if cpg_config.use_layer_embedding:
+            layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
+            properties.append(cpg.Property(
+                    'layer', cpg_config.layer_embedding_dim, layers))
+        environment = cpg.Environment(properties)
+        self.cpg_environments[adapter_name] = environment
+        return environment
 
     def add_invertible_lang_adapter(self, language):
         if language in self.invertible_lang_adapters:
             raise ValueError(f"Model already contains an adapter module for '{language}'.")
         inv_adap_config = self.config.adapters.get(language)["invertible_adapter"]
         if inv_adap_config["block_type"] == "nice":
+            cpg_config = self.config.adapters.get(language).cpg
+            if cpg_config:
+                cpg_config = cpg_config.to_cpg_module_config(include_layer=False)
+            else:
+                cpg_config = None
             inv_adap = NICECouplingBlock(
                 [[self.config.hidden_size]],
                 non_linearity=inv_adap_config["non_linearity"],
                 reduction_factor=inv_adap_config["reduction_factor"],
+                cpg_config=cpg_config
             )
         elif inv_adap_config["block_type"] == "glow":
             inv_adap = GLOWCouplingBlock(
