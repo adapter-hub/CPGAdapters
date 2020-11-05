@@ -336,8 +336,8 @@ def main():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
                 for key in sorted(results.keys()):
-                    logger.info("  %s = %s", key, str(result[key]))
-                    writer.write("%s = %s\n" % (key, str(result[key])))
+                    logger.info("  %s = %s", key, str(results[key]))
+                    writer.write("%s = %s\n" % (key, str(results[key])))
 
 
     return results

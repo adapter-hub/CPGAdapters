@@ -847,6 +847,8 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
                         raise ValueError('language must be specified when CPG is active')
                     context = {'language': language}
                     context_embedding = self.cpg_environments[adapter_name](context)
+                else:
+                    context_embedding = None
                 embedding_output = self.invertible_lang_adapters[adapter_name](
                         embedding_output, rev=False, context_embedding=context_embedding)
 
