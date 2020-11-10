@@ -572,7 +572,7 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
         if adapter_type == AdapterType.text_lang and config['cpg']:
             self.add_cpg_environment(adapter_name, config['cpg'])
         self.encoder.add_adapter(adapter_name, adapter_type)
-        if adapter_type == AdapterType.text_lang:
+        if adapter_type == AdapterType.text_lang and config['invertible_adapter']:
             self.add_invertible_lang_adapter(adapter_name)
 
     def add_cpg_environment(self, adapter_name, cpg_config):

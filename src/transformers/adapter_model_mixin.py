@@ -925,7 +925,7 @@ class ModelAdaptersMixin(ABC):
         """Freezes all weights of the model.
         """
         # first freeze/ unfreeze all model weights
-        for param in self.base_model.parameters():
+        for param in self.parameters():
             param.requires_grad = not freeze
         self.model_freezed = freeze
 
@@ -950,8 +950,10 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         """
         self.base_model.add_adapter(adapter_name, adapter_type, config)
 
-    def train_adapter(self, adapter_names: list):
+    def train_adapter(self, adapter_names: list, freeze_heads=False):
         """Sets the model into mode for training the given adapters."""
+        if freeze_heads:
+            self.freeze_model(True)
         self.base_model.train_adapter(adapter_names)
 
     def train_fusion(self, adapter_names: list):

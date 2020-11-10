@@ -183,7 +183,7 @@ def main():
 
     # Setup logging
     logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+        format="%(asctime)s.%(msecs)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO if training_args.local_rank in [-1, 0] else logging.WARN,
     )
@@ -252,15 +252,15 @@ def main():
             )
             # load a pre-trained from Hub if specified
             if adapter_args.load_adapter:
-                model.bert.load_adapter(
+                model.load_adapter(
                     adapter_args.load_adapter, AdapterType.text_lang, config=adapter_config, load_as=language,
-                    model_name=model_args.model_name_or_path
+                    model_name=model_args.model_name_or_path, with_head=False
                 )
             # otherwise, add a fresh adapter
             else:
-                model.bert.add_adapter(language, AdapterType.text_lang, config=adapter_config)
+                model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
-        model.bert.train_adapter([language])
+        model.train_adapter([language], freeze_heads=True)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
@@ -338,7 +338,6 @@ def main():
                 for key in sorted(results.keys()):
                     logger.info("  %s = %s", key, str(results[key]))
                     writer.write("%s = %s\n" % (key, str(results[key])))
-
 
     return results
 
