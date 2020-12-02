@@ -284,15 +284,14 @@ class BertSelfOutput(nn.Module, BertSelfOutputAdaptersMixin):
         self._init_adapter_modules()
 
     def forward(self, hidden_states, input_tensor,
-                adapter_names=None, cpg_environments=None, language=None, layer_num=None):
+                adapter_names=None, cpg_environments=None, language=None):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.adapters_forward(
                 hidden_states, input_tensor,
                 adapter_names=adapter_names,
                 cpg_environments=cpg_environments,
-                language=language,
-                layer_num=layer_num)
+                language=language)
         return hidden_states
 
 
@@ -332,7 +331,6 @@ class BertAttention(nn.Module):
         adapter_names=None,
         cpg_environments=None,
         language=None,
-        layer_num=None
     ):
         self_outputs = self.self(
             hidden_states, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask, output_attentions,
@@ -340,8 +338,7 @@ class BertAttention(nn.Module):
         attention_output = self.output(self_outputs[0], hidden_states,
                                        adapter_names=adapter_names,
                                        cpg_environments=cpg_environments,
-                                       language=language,
-                                       layer_num=layer_num)
+                                       language=language)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
@@ -378,7 +375,6 @@ class BertOutput(nn.Module, BertOutputAdaptersMixin):
             adapter_names=None,
             cpg_environments=None,
             language=None,
-            layer_num=None
     ):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -388,7 +384,6 @@ class BertOutput(nn.Module, BertOutputAdaptersMixin):
                 adapter_names=adapter_names,
                 cpg_environments=cpg_environments,
                 language=language,
-                layer_num=layer_num
         )
         return hidden_states
 
@@ -414,7 +409,6 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
         adapter_names=None,
         cpg_environments=None,
         language=None,
-        layer_num=None,
     ):
         self_attention_outputs = self.attention(
             hidden_states, attention_mask, head_mask,
@@ -422,7 +416,6 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
             adapter_names=adapter_names,
             cpg_environments=cpg_environments,
             language=language,
-            layer_num=layer_num
         )
         attention_output = self_attention_outputs[0]
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
@@ -446,7 +439,6 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
                 adapter_names=adapter_names,
                 cpg_environments=cpg_environments,
                 language=language,
-                layer_num=layer_num
         )
         outputs = (layer_output,) + outputs
         return outputs
@@ -495,7 +487,6 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
                     adapter_names=adapter_names,
                     cpg_environments=cpg_environments,
                     language=language,
-                    layer_num=i,
                 )
             else:
                 layer_outputs = layer_module(
@@ -508,7 +499,6 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
                     adapter_names=adapter_names,
                     cpg_environments=cpg_environments,
                     language=language,
-                    layer_num=i,
                 )
             hidden_states = layer_outputs[0]
 
@@ -1591,6 +1581,7 @@ class BertForTokenClassification(ModelWithHeadsAdaptersMixin, BertPreTrainedMode
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`, defaults to :obj:`None`):
@@ -1626,6 +1617,7 @@ class BertForTokenClassification(ModelWithHeadsAdaptersMixin, BertPreTrainedMode
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             adapter_names=adapter_names,
+            language=language,
         )
 
         sequence_output = outputs[0]

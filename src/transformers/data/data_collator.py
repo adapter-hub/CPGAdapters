@@ -16,7 +16,7 @@ and collate them into a batch, as a dictionary of Tensors.
 DataCollator = NewType("DataCollator", Callable[[List[InputDataClass]], Dict[str, torch.Tensor]])
 
 
-def default_data_collator(features: List[InputDataClass]) -> Dict[str, torch.Tensor]:
+def default_data_collator(features: List[InputDataClass], language=None) -> Dict[str, torch.Tensor]:
     """
     Very simple data collator that:
     - simply collates batches of dict-like objects
@@ -62,7 +62,16 @@ def default_data_collator(features: List[InputDataClass]) -> Dict[str, torch.Ten
             else:
                 batch[k] = torch.tensor([f[k] for f in features], dtype=torch.long)
 
+    batch["language"] = language
+
     return batch
+
+
+def language_aware_data_collator(language):
+    def collator(features):
+        return default_data_collator(features, language=language)
+
+    return collator
 
 
 @dataclass

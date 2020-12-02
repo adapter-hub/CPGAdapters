@@ -2,6 +2,7 @@
 # There's no way to ignore "F401 '...' imported but unused" warnings in this
 # module, but to preserve other warnings. So, don't check this module at all.
 
+from .data_collator import language_aware_data_collator
 from .metrics import is_sklearn_available
 from .processors import (
     DataProcessor,

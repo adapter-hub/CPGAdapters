@@ -214,7 +214,7 @@ class BertSelfOutputAdaptersMixin:
         return hidden_states
 
     def adapters_forward(self, hidden_states, input_tensor, adapter_names=None,
-                         cpg_environments=None, language=None, layer_num=None):
+                         cpg_environments=None, language=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -230,8 +230,7 @@ class BertSelfOutputAdaptersMixin:
             for adapter_stack in adapter_names:
                 if cpg_environments and adapter_stack[0] in cpg_environments:
                     assert language is not None
-                    assert layer_num is not None
-                    context = {'language': language, 'layer': 'layer_' + str(layer_num)}
+                    context = {'language': language}
                     context_embedding = cpg_environments[adapter_stack[0]](context)
                 else:
                     context_embedding = None
@@ -270,7 +269,7 @@ class BertOutputAdaptersMixin:
     def add_adapter(self, adapter_name: str, adapter_type: AdapterType):
         adapter_config = self.config.adapters.get(adapter_name)
         if adapter_config and adapter_config["output_adapter"]:
-            if adapter_config['cpg']:
+            if adapter_config.get('cpg', None):
                 cpg_config = cpg.CpgModuleConfig(adapter_config['cpg'])
             else:
                 cpg_config = None
@@ -427,8 +426,7 @@ class BertOutputAdaptersMixin:
     def adapters_forward(self, hidden_states, input_tensor,
                          adapter_names=None,
                          cpg_environments=None,
-                         language=None,
-                         layer_num=None):
+                         language=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -448,8 +446,7 @@ class BertOutputAdaptersMixin:
                 #        adapter_stack, str(cpg_environments)))
                 if cpg_environments and adapter_stack[0] in cpg_environments:
                     assert language is not None
-                    assert layer_num is not None
-                    context = {'language': language, 'layer': 'layer_' + str(layer_num)}
+                    context = {'language': language}
                     context_embedding = cpg_environments[adapter_stack[0]](context)
                 else:
                     context_embedding = None
@@ -569,7 +566,7 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
             self.config.adapters.set_config(adapter_type, config or DEFAULT_ADAPTER_CONFIG)
         config = self.config.adapters.get_config(adapter_type)
         self.config.adapters.add(adapter_name, adapter_type, config=config)
-        if adapter_type == AdapterType.text_lang and config['cpg']:
+        if adapter_type == AdapterType.text_lang and config.get('cpg', None):
             self.add_cpg_environment(adapter_name, config['cpg'])
         self.encoder.add_adapter(adapter_name, adapter_type)
         if adapter_type == AdapterType.text_lang and config['invertible_adapter']:
@@ -579,10 +576,10 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
         properties = []
         properties.append(cpg.Property(
                 'language', cpg_config['language_embedding_dim'], cpg_config['languages']))
-        if cpg_config['use_layer_embedding']:
-            layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
-            properties.append(cpg.Property(
-                    'layer', cpg_config['layer_embedding_dim'], layers))
+        #if cpg_config['layer_embedding_dim']:
+        #    layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
+        #    properties.append(cpg.Property(
+        #            'layer', cpg_config['layer_embedding_dim'], layers))
         environment = cpg.Environment(properties)
         self.cpg_environments[adapter_name] = environment
         return environment
@@ -592,11 +589,9 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
             raise ValueError(f"Model already contains an adapter module for '{language}'.")
         inv_adap_config = self.config.adapters.get(language)["invertible_adapter"]
         if inv_adap_config["block_type"] == "nice":
-            cpg_config = self.config.adapters.get(language)['cpg']
+            cpg_config = self.config.adapters.get(language).get('cpg', None)
             if cpg_config:
                 cpg_config = cpg.CpgModuleConfig(cpg_config, include_layer=False)
-            else:
-                cpg_config = None
             inv_adap = NICECouplingBlock(
                 [[self.config.hidden_size]],
                 non_linearity=inv_adap_config["non_linearity"],

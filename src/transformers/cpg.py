@@ -51,7 +51,7 @@ class CpgModuleConfig:
 
     def __init__(self, cpg_config, include_layer=True):
         self.context_dim = cpg_config['language_embedding_dim']
-        if cpg_config['use_layer_embedding'] and include_layer:
+        if cpg_config['layer_embedding_dim'] and include_layer:
             self.context_dim += cpg_config['layer_embedding_dim']
         # could have other attributes such as non-linearity to be applied after
         # matmul

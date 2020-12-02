@@ -34,6 +34,7 @@ from transformers import (
     AutoTokenizer,
     EvalPrediction,
     HfArgumentParser,
+    language_aware_data_collator,
     MultiLingAdapterArguments,
     Trainer,
     TrainingArguments,
@@ -76,6 +77,10 @@ class DataTrainingArguments:
 
     data_dir: str = field(
         metadata={"help": "The input data dir. Should contain the .txt files for a CoNLL-2003-formatted task."}
+    )
+    eval_split: Optional[str] = field(
+        default=Split.dev,
+        metadata={"help": "dev or test."},
     )
     labels: Optional[str] = field(
         default=None,
@@ -237,7 +242,7 @@ def main():
             model_type=config.model_type,
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
-            mode=Split.dev,
+            mode=data_args.eval_split,
         )
         if training_args.do_eval
         else None
@@ -267,12 +272,15 @@ def main():
             "f1": f1_score(out_label_list, preds_list),
         }
 
+    data_collator = language_aware_data_collator(adapter_args.language)
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
+        data_collator=data_collator,
         compute_metrics=compute_metrics,
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,

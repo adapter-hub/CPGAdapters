@@ -59,6 +59,7 @@ from .data import (
     glue_processors,
     glue_tasks_num_labels,
     is_sklearn_available,
+    language_aware_data_collator,
     squad_convert_examples_to_features,
     xnli_output_modes,
     xnli_processors,

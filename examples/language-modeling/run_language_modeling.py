@@ -109,6 +109,10 @@ class DataTrainingArguments:
         default=0.15, metadata={"help": "Ratio of tokens to mask for masked language modeling loss"}
     )
 
+    language_smoothing: float = field(
+        default=1.0, metadata={"help": "Exponent of smoothing when sampling languages during training."}
+    )
+
     block_size: int = field(
         default=-1,
         metadata={
@@ -141,13 +145,16 @@ def get_dataset(args: DataTrainingArguments, training_args, tokenizer: PreTraine
             return {
                     language: MultilingualDataset(
                             tokenizer, {language: file_path}, args.block_size,
-                            batch_size, overwrite_cache=args.overwrite_cache)
+                            batch_size, overwrite_cache=args.overwrite_cache,
+                            training=False)
                     for language, file_path in files_by_language.items()
             }
         else:
             return MultilingualDataset(
                     tokenizer, files_by_language, args.block_size,
-                    batch_size, overwrite_cache=args.overwrite_cache)
+                    batch_size, overwrite_cache=args.overwrite_cache,
+                    training=True, n_steps=training_args.max_steps,
+                    smoothing=args.language_smoothing)
 
     if args.line_by_line:
         return LineByLineTextDataset(tokenizer=tokenizer, file_path=file_path, block_size=args.block_size)
@@ -254,13 +261,13 @@ def main():
             if adapter_args.load_adapter:
                 model.load_adapter(
                     adapter_args.load_adapter, AdapterType.text_lang, config=adapter_config, load_as=language,
-                    model_name=model_args.model_name_or_path, with_head=False
+                    model_name=model_args.model_name_or_path, with_head=True
                 )
             # otherwise, add a fresh adapter
             else:
                 model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
-        model.train_adapter([language], freeze_heads=True)
+        model.train_adapter([language], freeze_heads=False)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(

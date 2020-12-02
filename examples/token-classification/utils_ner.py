@@ -90,11 +90,13 @@ if is_torch_available():
             model_type: str,
             max_seq_length: Optional[int] = None,
             overwrite_cache=False,
-            mode: Split = Split.train,
+            mode: Union[Split, str] = Split.train,
         ):
+            if isinstance(mode, Split):
+                mode = mode.value
             # Load data features from cache or dataset file
             cached_features_file = os.path.join(
-                data_dir, "cached_{}_{}_{}".format(mode.value, tokenizer.__class__.__name__, str(max_seq_length)),
+                data_dir, "cached_{}_{}_{}".format(mode, tokenizer.__class__.__name__, str(max_seq_length)),
             )
 
             # Make sure only the first process in distributed training processes the dataset,
