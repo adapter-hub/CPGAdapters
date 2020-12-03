@@ -113,6 +113,10 @@ class DataTrainingArguments:
         default=1.0, metadata={"help": "Exponent of smoothing when sampling languages during training."}
     )
 
+    freeze_embeddings: bool = field(
+        default=False, metadata={"help": "Whether embeddings should be frozen during training."}
+    )
+
     block_size: int = field(
         default=-1,
         metadata={
@@ -267,7 +271,7 @@ def main():
             else:
                 model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
-        model.train_adapter([language], freeze_heads=False)
+        model.train_adapter([language], freeze_heads=data_args.freeze_embeddings)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
