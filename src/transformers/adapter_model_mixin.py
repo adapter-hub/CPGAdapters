@@ -955,6 +955,9 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         if freeze_heads:
             self.freeze_model(True)
         self.base_model.train_adapter(adapter_names)
+        if not freeze_heads:
+            for param in self.cls.parameters():
+                param.requires_grad = True
 
     def train_fusion(self, adapter_names: list):
         """Sets the model in mode for training of adapter fusion determined by a list of adapter names."""

@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
+
 from transformers import (
     CONFIG_MAPPING,
     MODEL_WITH_LM_HEAD_MAPPING,
@@ -247,6 +249,9 @@ def main():
         model = AutoModelWithLMHead.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
+    embeddings_1 = torch.clone(model.bert.embeddings.word_embeddings.weight)
+    logging.info('Embeddings:\n%s' % str(embeddings_1))
+    #assert torch.all(embeddings_1 == model.get_output_embeddings().weight)
 
     # Setup adapters
     if adapter_args.train_adapter:
@@ -272,6 +277,11 @@ def main():
                 model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
         model.train_adapter([language], freeze_heads=data_args.freeze_embeddings)
+
+    #embeddings_2 = model.bert.embeddings.word_embeddings.weight
+    #logging.info('Embeddings:\n%s' % str(embeddings_2))
+    #assert not np.all(embeddings_1 == embeddings_2)
+    #assert torch.all(embeddings_2 == model.get_output_embeddings().weight)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
@@ -317,6 +327,10 @@ def main():
             else None
         )
         trainer.train(model_path=model_path)
+        if not data_args.freeze_embeddings:
+            embeddings_2 = model.bert.embeddings.word_embeddings.weight.clone().cpu()
+            logging.info('Embeddings:\n%s' % str(embeddings_2))
+            assert not torch.all(embeddings_2 == embeddings_1)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)
