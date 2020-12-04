@@ -276,7 +276,10 @@ def main():
             else:
                 model.add_adapter(language, AdapterType.text_lang, config=adapter_config)
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
-        model.train_adapter([language], freeze_heads=data_args.freeze_embeddings)
+        model.train_adapter([language], freeze_lm_head=data_args.freeze_embeddings)
+
+    for name, param in model.named_parameters():
+        logging.info('%s: %s' % (name, str(param.requires_grad)))
 
     #embeddings_2 = model.bert.embeddings.word_embeddings.weight
     #logging.info('Embeddings:\n%s' % str(embeddings_2))

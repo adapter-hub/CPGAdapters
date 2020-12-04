@@ -536,6 +536,9 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
             if adapter_name in self.invertible_lang_adapters:
                 for param in self.invertible_lang_adapters[adapter_name].parameters():
                     param.requires_grad = True
+            if adapter_name in self.cpg_environments:
+                for param in self.cpg_environments[adapter_name].parameters():
+                    param.requires_grad = True
         # use the adapters to be trained by default in every forward pass
         self.set_active_adapters(adapter_names)
 

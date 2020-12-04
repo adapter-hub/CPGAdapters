@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from seqeval.metrics import f1_score, precision_score, recall_score
+import torch
 from torch import nn
 
 from transformers import (
@@ -173,6 +174,7 @@ def main():
         config=config,
         cache_dir=model_args.cache_dir,
     )
+    embeddings_1 = model.bert.embeddings.word_embeddings.weight.detach().clone().cpu()
 
     # Setup adapters
     adapter_names = None
@@ -219,6 +221,9 @@ def main():
             model.set_active_adapters(adapter_names)
         else:
             model.set_active_adapters([task_name])
+
+    embeddings_2 = model.bert.embeddings.word_embeddings.weight.detach().clone().cpu()
+    assert not torch.all(embeddings_1 == embeddings_2)
 
     # Get datasets
     train_dataset = (
