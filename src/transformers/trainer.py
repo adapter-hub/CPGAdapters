@@ -222,6 +222,7 @@ class Trainer:
         # adapters used
         self.do_save_full_model = do_save_full_model
         self.do_save_adapters = do_save_adapters
+        self.do_save_embeddings = do_save_embeddings
         self.do_save_adapter_fusion = do_save_adapter_fusion
         self.adapter_names = adapter_names
         if is_torch_tpu_available():
