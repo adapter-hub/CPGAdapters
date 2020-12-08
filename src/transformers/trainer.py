@@ -186,6 +186,7 @@ class Trainer:
         prediction_loss_only=False,
         do_save_full_model: bool = True,
         do_save_adapters: bool = False,
+        do_save_embeddings: bool = False,
         do_save_adapter_fusion: bool = False,
         adapter_names: Optional[List[List[str]]] = None,
         tb_writer: Optional["SummaryWriter"] = None,
@@ -745,7 +746,8 @@ class Trainer:
         if not isinstance(self.model, PreTrainedModel):
             raise ValueError("Trainer.model appears to not be a PreTrainedModel")
         if self.do_save_adapters:
-            self.model.save_all_adapters(output_dir)
+            self.model.save_all_adapters(
+                    output_dir, with_embeddings=self.do_save_embeddings)
         if self.do_save_adapter_fusion:
             self.model.save_all_adapter_fusions(output_dir)
         if self.do_save_full_model:

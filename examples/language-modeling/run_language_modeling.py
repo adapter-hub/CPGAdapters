@@ -270,7 +270,7 @@ def main():
             if adapter_args.load_adapter:
                 model.load_adapter(
                     adapter_args.load_adapter, AdapterType.text_lang, config=adapter_config, load_as=language,
-                    model_name=model_args.model_name_or_path, with_head=True
+                    model_name=model_args.model_name_or_path, with_head=True, with_embeddings=True
                 )
             # otherwise, add a fresh adapter
             else:
@@ -278,13 +278,15 @@ def main():
         # Freeze all model weights except of those of this adapter & use this adapter in every forward pass
         model.train_adapter([language], freeze_lm_head=data_args.freeze_embeddings)
 
-    for name, param in model.named_parameters():
-        logging.info('%s: %s' % (name, str(param.requires_grad)))
+    #for name, param in model.named_parameters():
+    #    logging.info('%s: %s' % (name, str(param.requires_grad)))
 
-    #embeddings_2 = model.bert.embeddings.word_embeddings.weight
-    #logging.info('Embeddings:\n%s' % str(embeddings_2))
+    embeddings_2 = model.bert.embeddings.word_embeddings.weight
+    logging.info('Embeddings:\n%s' % str(embeddings_2))
     #assert not np.all(embeddings_1 == embeddings_2)
     #assert torch.all(embeddings_2 == model.get_output_embeddings().weight)
+    #assert not torch.all(embeddings_1 == embeddings_2)
+    logging.info('en embedding:\n%s' % model.bert.cpg_environments.multilingual.language.en_embedding)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(
@@ -320,6 +322,7 @@ def main():
         prediction_loss_only=True,
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,
+        do_save_embeddings=not data_args.freeze_embeddings,
     )
 
     # Training

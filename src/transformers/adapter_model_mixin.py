@@ -96,6 +96,9 @@ class WeightsLoaderHelper:
         state_dict = state_dict.copy()
         if metadata is not None:
             state_dict._metadata = metadata
+        logging.info('state_dict contains keys:')
+        for key in sorted(list(state_dict.keys())):
+            logging.info(key)
 
         def load(module, prefix=""):
             local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
@@ -274,9 +277,10 @@ class AdapterLoader(WeightsLoader):
     Model classes passed to this loader must implement the `ModelAdaptersMixin` class.
     """
 
-    def __init__(self, model, adapter_type=None):
+    def __init__(self, model, adapter_type=None, with_embeddings=False):
         super().__init__(model, WEIGHTS_NAME, CONFIG_NAME)
         self.adapter_type = adapter_type
+        self.with_embeddings = with_embeddings
 
     @property
     def config(self):
@@ -287,6 +291,8 @@ class AdapterLoader(WeightsLoader):
             return (
                 lambda x: "{}_adapters.{}".format(self.adapter_type, adapter_name) in x
                 or "invertible_lang_adapters.{}".format(adapter_name) in x
+                or "cpg_environments.{}".format(adapter_name) in x
+                or (self.with_embeddings and 'embeddings.word_embeddings' in x)
             )
         elif AdapterType.has(self.adapter_type):
             return lambda x: "{}_adapters.{}".format(self.adapter_type, adapter_name) in x
@@ -294,7 +300,11 @@ class AdapterLoader(WeightsLoader):
             raise ValueError("Invalid adapter type {}".format(self.adapter_type))
 
     def rename_func(self, old_name, new_name):
-        return lambda k: k.replace("_adapters.{}".format(old_name), "_adapters.{}".format(new_name))
+        def rename(k):
+            k = k.replace("_adapters.{}".format(old_name), "_adapters.{}".format(new_name))
+            k = k.replace("cpg_environments.{}".format(old_name), "cpg_environments.{}".format(new_name))
+            return k
+        return rename
 
     def save(self, save_directory, name, meta_dict=None):
         """Saves an adapter and its configuration file to a directory, so that it can be reloaded
@@ -757,6 +767,7 @@ class ModelAdaptersMixin(ABC):
         adapter_name: str,
         meta_dict: dict = None,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = False,
     ):
         """Saves an adapter and its configuration file to a directory so that it can be shared
         or reloaded using `load_adapter()`.
@@ -770,7 +781,7 @@ class ModelAdaptersMixin(ABC):
         """
         adapter_type = self.config.adapters.get_type(adapter_name)
         if adapter_type:
-            loader = AdapterLoader(self, adapter_type)
+            loader = AdapterLoader(self, adapter_type, with_embeddings=with_embeddings)
             loader.save(save_directory, adapter_name, meta_dict)
             # save additional custom weights
             if custom_weights_loaders:
@@ -809,6 +820,7 @@ class ModelAdaptersMixin(ABC):
         model_name: str = None,
         load_as: str = None,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = True,
         **kwargs
     ) -> str:
         """Loads a pre-trained pytorch adapter module from the local file system or a remote location.
@@ -833,7 +845,7 @@ class ModelAdaptersMixin(ABC):
             str: The name with which the adapter was added to the model.
         """
         if AdapterType.has(adapter_type) or not adapter_type:
-            loader = AdapterLoader(self, adapter_type)
+            loader = AdapterLoader(self, adapter_type, with_embeddings=with_embeddings)
             load_dir, load_name = loader.load(adapter_name_or_path, config, version, model_name, load_as, **kwargs)
             # load additional custom weights
             if custom_weights_loaders:
@@ -882,6 +894,7 @@ class ModelAdaptersMixin(ABC):
         save_directory: str,
         meta_dict: dict = None,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = False,
     ):
         """Saves all adapters of this model together with their configuration
         to subfolders of the given location.
@@ -897,7 +910,12 @@ class ModelAdaptersMixin(ABC):
                 meta_dict.update({"config_id": h})
             else:
                 meta_dict = {"config_id": h}
-            self.save_adapter(save_path, name, meta_dict=meta_dict, custom_weights_loaders=custom_weights_loaders)
+            self.save_adapter(
+                    save_path, name,
+                    meta_dict=meta_dict,
+                    custom_weights_loaders=custom_weights_loaders,
+                    with_embeddings=with_embeddings,
+            )
 
     def save_all_adapter_fusions(
         self,
@@ -976,6 +994,7 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         with_head: bool = True,
         meta_dict: dict = None,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = False,
     ):
         if with_head:
             if custom_weights_loaders is None:
@@ -983,7 +1002,10 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
             if not any([isinstance(o, PredictionHeadLoader) for o in custom_weights_loaders]):
                 custom_weights_loaders.append(PredictionHeadLoader(self, error_on_missing=False))
         super().save_adapter(
-            save_directory, adapter_name, meta_dict=meta_dict, custom_weights_loaders=custom_weights_loaders,
+            save_directory, adapter_name,
+            meta_dict=meta_dict,
+            custom_weights_loaders=custom_weights_loaders,
+            with_embeddings=with_embeddings,
         )
 
     def load_adapter(
@@ -996,6 +1018,7 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         load_as: str = None,
         with_head: bool = True,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = True,
         **kwargs
     ) -> str:
         if with_head:
@@ -1010,6 +1033,7 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
             model_name=model_name,
             load_as=load_as,
             custom_weights_loaders=custom_weights_loaders,
+            with_embeddings=with_embeddings,
             **kwargs,
         )
 
@@ -1019,11 +1043,16 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         with_head: bool = True,
         meta_dict: dict = None,
         custom_weights_loaders: Optional[List[WeightsLoader]] = None,
+        with_embeddings: bool = False,
     ):
         if with_head:
             if custom_weights_loaders is None:
                 custom_weights_loaders = []
             custom_weights_loaders.append(PredictionHeadLoader(self, error_on_missing=False))
         super().save_all_adapters(
-            save_directory, meta_dict=meta_dict, custom_weights_loaders=custom_weights_loaders,
+            save_directory,
+            meta_dict=meta_dict,
+            custom_weights_loaders=custom_weights_loaders,
+            with_embeddings=with_embeddings,
         )
+
