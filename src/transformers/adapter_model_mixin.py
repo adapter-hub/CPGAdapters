@@ -968,12 +968,13 @@ class ModelWithHeadsAdaptersMixin(ModelAdaptersMixin):
         """
         self.base_model.add_adapter(adapter_name, adapter_type, config)
 
-    def train_adapter(self, adapter_names: list, freeze_lm_head=None):
+    def train_adapter(self, adapter_names: list, freeze_embeddings=None):
         """Sets the model into mode for training the given adapters."""
         self.base_model.train_adapter(adapter_names)
-        if freeze_lm_head is not None:
-            for param in self.cls.parameters():
-                param.requires_grad = not freeze_lm_head
+        if freeze_embeddings is not None:
+            self.base_model.embeddings.word_embeddings.weight.requires_grad = not freeze_embeddings
+            #for param in self.cls.parameters():
+            #    param.requires_grad = not freeze_lm_head
 
     def train_fusion(self, adapter_names: list):
         """Sets the model in mode for training of adapter fusion determined by a list of adapter names."""
