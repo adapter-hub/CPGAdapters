@@ -174,8 +174,6 @@ def main():
         config=config,
         cache_dir=model_args.cache_dir,
     )
-    embeddings_1 = model.bert.embeddings.word_embeddings.weight.detach().clone().cpu()
-    logging.info('embeddings_1:\n%s' % str(embeddings_1))
 
     # Setup adapters
     adapter_names = None
@@ -224,9 +222,6 @@ def main():
         else:
             model.set_active_adapters([task_name])
 
-    embeddings_2 = model.bert.embeddings.word_embeddings.weight.detach().clone().cpu()
-    logging.info('embeddings_2:\n%s' % str(embeddings_2))
-    assert not torch.all(embeddings_1 == embeddings_2)
     for name, param in model.named_parameters():
         logging.info('%s: %s' % (name, str(param.requires_grad)))
 
