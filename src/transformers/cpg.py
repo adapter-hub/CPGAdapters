@@ -1,6 +1,7 @@
 import logging
 import math
 
+import lang2vec.lang2vec as l2v
 import numpy as np
 import torch
 from torch import nn
@@ -25,6 +26,40 @@ class Property(nn.Module):
     def forward(self, value):
         name = value + '_embedding'
         return self.__getattr__(name)
+
+
+class UrielMlpProperty(nn.Module):
+
+    def __init__(self, name, dim, languages, dropout=0.1):
+        super().__init__()
+        logging.info('Initialising URIEL embedding "%s" with dim %d and languages %s' % (
+                name, dim, ', '.join(languages)))
+        self.name = name
+        self.dim = dim
+        self.features = l2v.get_features(
+                languages, 'syntax_knn+phonology_knn+inventory_knn')
+        self.features = {
+                lang: torch.Tensor(vec)
+                for lang, vec in self.features.items()
+        }
+        self.n_features = None
+        for vec in self.features.values():
+            if self.n_features is None:
+                self.n_features = len(vec)
+            else:
+                assert len(vec) == self.n_features
+        self.layer_1 = nn.Linear(self.n_features, self.dim)
+        self.layer_2 = nn.Linear(self.dim, self.dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, language):
+        features = self.features[language].to(self.layer_1.weight.device)
+        embedding = self.layer_1(features)
+        embedding = F.relu(embedding)
+        embedding = self.layer_2(embedding)
+        embedding = F.relu(embedding)
+        embedding = self.dropout(embedding)
+        return embedding
 
 
 class Environment(nn.Module):

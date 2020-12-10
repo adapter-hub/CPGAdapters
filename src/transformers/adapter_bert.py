@@ -577,8 +577,13 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
 
     def add_cpg_environment(self, adapter_name, cpg_config):
         properties = []
-        properties.append(cpg.Property(
-                'language', cpg_config['language_embedding_dim'], cpg_config['languages']))
+        if cpg_config['use_typology']:
+            language_property = cpg.UrielMlpProperty(
+                    'language', cpg_config['language_embedding_dim'], cpg_config['languages'])
+        else:
+            language_property = cpg.Property(
+                    'language', cpg_config['language_embedding_dim'], cpg_config['languages'])
+        properties.append(language_property)
         #if cpg_config['layer_embedding_dim']:
         #    layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
         #    properties.append(cpg.Property(

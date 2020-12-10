@@ -249,9 +249,6 @@ def main():
         model = AutoModelWithLMHead.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-    embeddings_1 = torch.clone(model.bert.embeddings.word_embeddings.weight)
-    logging.info('Embeddings:\n%s' % str(embeddings_1))
-    #assert torch.all(embeddings_1 == model.get_output_embeddings().weight)
 
     # Setup adapters
     if adapter_args.train_adapter:
@@ -280,13 +277,6 @@ def main():
 
     for name, param in model.named_parameters():
         logging.info('%s: %s' % (name, str(param.requires_grad)))
-
-    embeddings_2 = model.bert.embeddings.word_embeddings.weight
-    logging.info('Embeddings:\n%s' % str(embeddings_2))
-    #assert not np.all(embeddings_1 == embeddings_2)
-    #assert torch.all(embeddings_2 == model.get_output_embeddings().weight)
-    #assert not torch.all(embeddings_1 == embeddings_2)
-    logging.info('en embedding:\n%s' % model.bert.cpg_environments.multilingual.language.en_embedding)
 
     if config.model_type in ["bert", "roberta", "distilbert", "camembert"] and not data_args.mlm:
         raise ValueError(

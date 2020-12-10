@@ -19,6 +19,7 @@ class CpgConfig(Mapping):
     language_embedding_dim: int
     languages: List[str]
     layer_embedding_dim: Optional[int] = None
+    use_typology: Optional[bool] = False
 
     # we want to emulate a simple form of immutability while keeping the ability to add custom attributes.
     # therefore, we don't allow changing attribute values if set once.
@@ -176,7 +177,37 @@ class TestCpgConfig(AdapterConfig):
         language_embedding_dim=32,
         languages=[
                 'ar', 'bg', 'cdo', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'gn', 'hr', 'ilo', 'is', 'it',
-                'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'])
+                'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'],
+        use_typology=False)
+
+
+@dataclass
+class UrielCpgConfig(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = False
+    non_linearity: str = "relu"
+    reduction_factor: int = 16
+    #invertible_adapter: Optional[dict] = InvertibleAdapterConfig(
+    #    block_type="nice", non_linearity="relu", reduction_factor=2
+    #)
+    cpg: Optional[CpgConfig] = CpgConfig(
+        language_embedding_dim=32,
+        languages=[
+                'ar', 'bg', 'cdo', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'gn', 'hr', 'ilo', 'is', 'it',
+                'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'],
+        use_typology=True)
 
 
 @dataclass
@@ -225,7 +256,8 @@ class HoulsbyConfig(AdapterConfig):
 ADAPTER_CONFIG_MAP = {
         "pfeiffer": PfeifferConfig(),
         "houlsby": HoulsbyConfig(),
-        "cpg": TestCpgConfig()
+        "cpg": TestCpgConfig(),
+        "uriel-cpg": UrielCpgConfig(),
 }
 
 DEFAULT_ADAPTER_CONFIG = "pfeiffer"
