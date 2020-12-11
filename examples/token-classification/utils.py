@@ -24,6 +24,7 @@ from typing import List, Optional, Union
 
 from filelock import FileLock
 
+import pyconll
 from transformers import PreTrainedTokenizer, is_tf_available, is_torch_available
 
 
@@ -71,7 +72,7 @@ if is_torch_available():
     from torch import nn
     from torch.utils.data.dataset import Dataset
 
-    class NerDataset(Dataset):
+    class TokenClassificationDataset(Dataset):
         """
         This will be superseded by a framework-agnostic approach
         soon.
@@ -84,12 +85,14 @@ if is_torch_available():
 
         def __init__(
             self,
+            task: str,
             data_dir: str,
             tokenizer: PreTrainedTokenizer,
             labels: List[str],
             model_type: str,
             max_seq_length: Optional[int] = None,
             overwrite_cache=False,
+            language=None,
             mode: Union[Split, str] = Split.train,
         ):
             if isinstance(mode, Split):
@@ -109,7 +112,7 @@ if is_torch_available():
                     self.features = torch.load(cached_features_file)
                 else:
                     logger.info(f"Creating features from dataset file at {data_dir}")
-                    examples = read_examples_from_file(data_dir, mode)
+                    examples = read_examples_from_file(task, data_dir, mode, language=language)
                     # TODO clean up all this to leverage built-in features of tokenizers
                     self.features = convert_examples_to_features(
                         examples,
@@ -232,9 +235,18 @@ if is_tf_available():
             return self.features[i]
 
 
-def read_examples_from_file(data_dir, mode: Union[Split, str]) -> List[InputExample]:
+def read_examples_from_file(task, data_dir, mode: Union[Split, str], language=None) -> List[InputExample]:
     if isinstance(mode, Split):
         mode = mode.value
+    if task == 'ner':
+        return read_ner_examples_from_file(data_dir, mode)
+    elif task == 'udpos':
+        return read_udpos_examples_from_file(data_dir, mode, language)
+    else:
+        raise ValueError('Unrecognised task name: "%s"' % task)
+
+
+def read_ner_examples_from_file(data_dir, mode):
     file_path = os.path.join(data_dir, f"{mode}.txt")
     guid_index = 1
     examples = []
@@ -258,6 +270,24 @@ def read_examples_from_file(data_dir, mode: Union[Split, str]) -> List[InputExam
                     labels.append("O")
         if words:
             examples.append(InputExample(guid=f"{mode}-{guid_index}", words=words, labels=labels))
+    return examples
+
+
+def read_udpos_examples_from_file(data_dir, mode, language):
+    file_path = os.path.join(data_dir, f"{language}-ud-{mode}.conllu")
+    corpus = pyconll.load_from_file(file_path)
+
+    examples = []
+    for i, sentence in enumerate(corpus):
+        words = []
+        labels = []
+        for token in sentence:
+            if token.upos is not None:
+                words.append(token.form)
+                labels.append(token.upos)
+        guid = f'{mode}-{i}'
+        examples.append(InputExample(guid=guid, words=words, labels=labels))
+
     return examples
 
 
@@ -389,12 +419,16 @@ def convert_examples_to_features(
     return features
 
 
-def get_labels(path: str) -> List[str]:
+def get_labels(task: str, path: str = None) -> List[str]:
     if path:
         with open(path, "r") as f:
             labels = f.read().splitlines()
-        if "O" not in labels:
+        if task == "ner" and "O" not in labels:
             labels = ["O"] + labels
         return labels
-    else:
+    elif task == "ner":
         return ["O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
+    elif task == "udpos":
+        return ['ADJ', 'ADP', 'ADV', 'AUX', 'CONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART',
+                'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X']
+

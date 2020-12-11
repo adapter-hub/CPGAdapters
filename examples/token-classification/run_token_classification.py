@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from seqeval.metrics import f1_score, precision_score, recall_score
+from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score
 import torch
 from torch import nn
 
@@ -41,7 +41,7 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-from utils_ner import NerDataset, Split, get_labels
+from utils import TokenClassificationDataset, Split, get_labels
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,9 @@ class DataTrainingArguments:
 
     data_dir: str = field(
         metadata={"help": "The input data dir. Should contain the .txt files for a CoNLL-2003-formatted task."}
+    )
+    task: str = field(
+        metadata={"help": "'ner' or 'udpos'."}
     )
     eval_split: Optional[str] = field(
         default=Split.dev,
@@ -145,7 +148,7 @@ def main():
     set_seed(training_args.seed)
 
     # Prepare CONLL-2003 task
-    labels = get_labels(data_args.labels)
+    labels = get_labels(data_args.task, data_args.labels)
     #labels = get_labels(None)
     label_map: Dict[int, str] = {i: label for i, label in enumerate(labels)}
     num_labels = len(labels)
@@ -178,9 +181,8 @@ def main():
     # Setup adapters
     adapter_names = None
     if adapter_args.train_adapter:
-        task_name = "ner"
         # check if adapter already exists, otherwise add it
-        if task_name not in model.config.adapters.adapter_list(AdapterType.text_task):
+        if data_args.task not in model.config.adapters.adapter_list(AdapterType.text_task):
             # resolve the adapter config
             adapter_config = AdapterConfig.load(
                 adapter_args.adapter_config,
@@ -190,11 +192,11 @@ def main():
             # load a pre-trained from Hub if specified
             if adapter_args.load_adapter:
                 model.load_adapter(
-                    adapter_args.load_adapter, AdapterType.text_task, config=adapter_config, load_as=task_name,
+                    adapter_args.load_adapter, AdapterType.text_task, config=adapter_config, load_as=data_args.task,
                 )
             # otherwise, add a fresh adapter
             else:
-                model.add_adapter(task_name, AdapterType.text_task, config=adapter_config)
+                model.add_adapter(data_args.task, AdapterType.text_task, config=adapter_config)
         # optionally load a pre-trained language adapter
         if adapter_args.load_lang_adapter:
             # resolve the language adapter config
@@ -214,20 +216,21 @@ def main():
         else:
             lang_adapter_name = None
         # Freeze all model weights except of those of this adapter
-        model.train_adapter([task_name])
+        model.train_adapter([data_args.task])
         # Set the adapters to be used in every forward pass
         if lang_adapter_name:
-            adapter_names = [[lang_adapter_name], [task_name]]
+            adapter_names = [[lang_adapter_name], [data_args.task]]
             model.set_active_adapters(adapter_names)
         else:
-            model.set_active_adapters([task_name])
+            model.set_active_adapters([data_args.task])
 
     for name, param in model.named_parameters():
         logging.info('%s: %s' % (name, str(param.requires_grad)))
 
     # Get datasets
     train_dataset = (
-        NerDataset(
+        TokenClassificationDataset(
+            task=data_args.task,
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
             labels=labels,
@@ -235,12 +238,14 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.train,
+            language=adapter_args.language,
         )
         if training_args.do_train
         else None
     )
     eval_dataset = (
-        NerDataset(
+        TokenClassificationDataset(
+            task=data_args.task,
             data_dir=data_args.data_dir,
             tokenizer=tokenizer,
             labels=labels,
@@ -248,6 +253,7 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=data_args.eval_split,
+            language=adapter_args.language,
         )
         if training_args.do_eval
         else None
@@ -272,6 +278,7 @@ def main():
     def compute_metrics(p: EvalPrediction) -> Dict:
         preds_list, out_label_list = align_predictions(p.predictions, p.label_ids)
         return {
+            "accuracy": accuracy_score(out_label_list, preds_list),
             "precision": precision_score(out_label_list, preds_list),
             "recall": recall_score(out_label_list, preds_list),
             "f1": f1_score(out_label_list, preds_list),
@@ -310,7 +317,9 @@ def main():
 
         result = trainer.evaluate()
 
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
+        output_eval_file = os.path.join(
+                training_args.output_dir,
+                "%s_eval_results.txt" % data_args.task)
         if trainer.is_world_master():
             with open(output_eval_file, "w") as writer:
                 logger.info("***** Eval results *****")
