@@ -563,10 +563,11 @@ class BertLMPredictionHead(nn.Module):
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
 
-    def forward(self, hidden_states, inv_lang_adapter=None):
+    def forward(self, hidden_states, inv_lang_adapter=None, context_embedding=None):
         hidden_states = self.transform(hidden_states)
         if inv_lang_adapter:
-            hidden_states = inv_lang_adapter(hidden_states, rev=True)
+            hidden_states = inv_lang_adapter(
+                    hidden_states, rev=True, context_embedding=context_embedding)
         hidden_states = self.decoder(hidden_states)
         return hidden_states
 
@@ -576,8 +577,11 @@ class BertOnlyMLMHead(nn.Module):
         super().__init__()
         self.predictions = BertLMPredictionHead(config)
 
-    def forward(self, sequence_output, inv_lang_adapter=None):
-        prediction_scores = self.predictions(sequence_output, inv_lang_adapter)
+    def forward(self, sequence_output, inv_lang_adapter=None, context_embedding=None):
+        prediction_scores = self.predictions(
+                sequence_output,
+                inv_lang_adapter=inv_lang_adapter,
+                context_embedding=context_embedding)
         return prediction_scores
 
 
@@ -723,6 +727,15 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embeddings.word_embeddings = value
 
+    def get_context_embedding(self, adapter_name, language=None):
+        if adapter_name in self.cpg_environments:
+            if language is None:
+                raise ValueError('language must be specified when CPG is active')
+            context = {'language': language}
+            return self.cpg_environments[adapter_name](context)
+        else:
+            return None
+
     def _prune_heads(self, heads_to_prune):
         """ Prunes heads of the model.
             heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
@@ -832,13 +845,8 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
 
             if adapter_names[0][0] in self.invertible_lang_adapters:
                 adapter_name = adapter_names[0][0]
-                if adapter_name in self.cpg_environments:
-                    if language is None:
-                        raise ValueError('language must be specified when CPG is active')
-                    context = {'language': language}
-                    context_embedding = self.cpg_environments[adapter_name](context)
-                else:
-                    context_embedding = None
+                context_embedding = self.get_context_embedding(
+                        adapter_name, language=language)
                 embedding_output = self.invertible_lang_adapters[adapter_name](
                         embedding_output, rev=False, context_embedding=context_embedding)
 
@@ -1020,6 +1028,7 @@ class BertForPreTraining(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
         )
 
         sequence_output, pooled_output = outputs[:2]
+        adapter_names = adapter_names or self.active_adapters
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
             language = adapter_names[0][0]
@@ -1137,8 +1146,17 @@ class BertLMHeadModel(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
 
         sequence_output = outputs[0]
 
+        adapter_names = adapter_names or self.active_adapters
+        if adapter_names is not None:
+            adapter_names = parse_adapter_names(adapter_names)
+            first_adapter = adapter_names[0][0]
+        else:
+            first_adapter = None
+        context_embedding = self.bert.get_context_embedding(first_adapter, language=language)
         prediction_scores = self.cls(
-            sequence_output, inv_lang_adapter=self.bert.get_invertible_lang_adapter(language),
+            sequence_output,
+            inv_lang_adapter=self.bert.get_invertible_lang_adapter(first_adapter),
+            context_embedding=context_embedding,
         )
 
         outputs = (prediction_scores,) + outputs[2:]  # Add hidden states and attention if they are here
@@ -1194,6 +1212,7 @@ class BertForMaskedLM(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
         encoder_attention_mask=None,
         output_attentions=None,
         output_hidden_states=None,
+        adapter_names=None,
         language=None,
         **kwargs
     ):
@@ -1248,7 +1267,18 @@ class BertForMaskedLM(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
         )
 
         sequence_output = outputs[0]
-        prediction_scores = self.cls(sequence_output)
+        adapter_names = adapter_names or self.active_adapters
+        if adapter_names is not None:
+            adapter_names = parse_adapter_names(adapter_names)
+            first_adapter = adapter_names[0][0]
+        else:
+            first_adapter = None
+        context_embedding = self.bert.get_context_embedding(first_adapter, language=language)
+        prediction_scores = self.cls(
+            sequence_output,
+            inv_lang_adapter=self.bert.get_invertible_lang_adapter(first_adapter),
+            context_embedding=context_embedding,
+        )
 
         outputs = (prediction_scores,) + outputs[2:]  # Add hidden states and attention if they are here
 
