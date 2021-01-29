@@ -55,7 +55,8 @@ class Adapter(nn.Module):
         add_layer_norm_before=True,
         add_layer_norm_after=False,
         residual_before_ln=True,
-        cpg_config=None
+        cpg_config=None,
+        output_size=None
     ):
         super().__init__()
 
@@ -64,6 +65,7 @@ class Adapter(nn.Module):
         self.add_layer_norm_after = add_layer_norm_after
         self.residual_before_ln = residual_before_ln
         self.cpg_config = cpg_config
+        self.output_size = input_size if output_size is None else output_size
 
         # list for all modules of the adapter, passed into nn.Sequential()
         seq_list = []
@@ -97,12 +99,12 @@ class Adapter(nn.Module):
 
         # Up projection to input size
         self.adapter_up = cpg.Linear(
-                self.down_sample, self.input_size, config=self.cpg_config)
+                self.down_sample, self.output_size, config=self.cpg_config)
 
         # If we want to have a layer norm on output, we apply it later after a separate residual connection
         # This means that we learn a new output layer norm, which replaces another layer norm learned in the bert layer
         if self.add_layer_norm_after:
-            self.adapter_norm_after = nn.LayerNorm(self.input_size)
+            self.adapter_norm_after = nn.LayerNorm(self.output_size)
 
         # if we want to initialize with the bert strategy then this function is called for all the linear layers
         if init_bert_weights:

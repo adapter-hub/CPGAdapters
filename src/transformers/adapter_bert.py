@@ -4,7 +4,10 @@ import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
+import math
 from . import cpg
+
+from .cpg import CpgModule
 from .adapter_config import DEFAULT_ADAPTER_CONFIG, AdapterType
 from .adapter_model_mixin import ModelAdaptersMixin, ModelWithHeadsAdaptersMixin
 from .adapter_modeling import Activation_Function_Class, Adapter, BertFusion, GLOWCouplingBlock, NICECouplingBlock
@@ -35,6 +38,125 @@ def get_fusion_regularization_loss(model):
                 reg_loss += 0.01 * (target - layer_fusion.value.weight).pow(2).sum()
 
     return reg_loss
+
+
+class Head(CpgModule):
+
+    def __init__(self, in_features, bias=True, config=None, max_length=None, max_label_length=None,layers=2, activation_function=None, hidden_dropout_prob=0.0):
+        class c:
+            context_dim = in_features * 2
+        config = c()
+        super().__init__(config)
+        self.in_features = in_features
+        self.max_length = max_length
+        self.max_label_length = max_label_length
+        self.dropout = torch.nn.Dropout(0.3)
+        self.label_embedder = nn.Linear(self.in_features , self.in_features)
+        # self.label_embedder = Adapter(non_linearity="gelu",
+        #                               input_size=self.in_features*2,
+        #                               output_size=self.in_features,
+        #                               down_sample=48,)
+
+
+        def gelu_new(x):
+            """ Implementation of the gelu activation function currently in Google Bert repo (identical to OpenAI GPT).
+                Also see https://arxiv.org/abs/1606.08415
+            """
+            return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
+        self.non_lin = gelu_new
+
+        pred_linear = []
+
+        for l in range(layers):
+            pred_linear.append(nn.Dropout(hidden_dropout_prob))
+            if l < layers - 1:
+                # pred_linear.append(nn.Linear(self.in_features, self.in_features))
+                pred_linear.append(cpg.Linear(self.in_features, self.in_features, config=c))
+                pred_linear.append(activation_function)
+
+        self.pred_linear = cpg.Sequential(*pred_linear)
+
+        cpg_linear = []
+
+        for l in range(layers):
+            cpg_linear.append(nn.Dropout(hidden_dropout_prob))
+            if l < layers - 1:
+                cpg_linear.append(nn.Linear(self.in_features, self.in_features))
+                cpg_linear.append(activation_function)
+
+        self.cpg_linear = nn.Sequential(*cpg_linear)
+
+        self.add_param('weight', (1, in_features))
+        if bias:
+            self.add_param('bias', (1,))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.config:
+            self.init_params()
+        else:
+            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            if self.bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+                bound = 1 / math.sqrt(fan_in)
+                nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, pred_input, contextual_inputs, context_embedding=None, max_length=None, max_label_length=None,attention_mask=None):
+
+        if (max_label_length is None and self.max_label_length is None) or (max_length is None and self.max_length is None):
+            raise Exception("Max Lengths are not set for CPG Head, cannot compute parameters.")
+
+        max_length = max_length if max_length is not None else self.max_length
+        max_label_length = max_label_length if max_label_length is not None else self.max_label_length
+
+        input_length = contextual_inputs.shape[1]
+
+        weight = None
+        bias = None
+
+        contextual_inputs = self.non_lin(self.cpg_linear(contextual_inputs))
+
+        for i in range(max_length, input_length, max_label_length):
+            c = torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:, i + 1:i + max_label_length - 1][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1) / torch.sum(attention_mask[:, i + 1:i + max_label_length - 1], -1)[:,None].repeat(1,contextual_inputs.shape[-1])
+            # c = torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:, i + 1:i + max_label_length - 1][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1)
+
+            c = torch.cat((c,pred_input), 1)
+
+            if weight is None:
+                # torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:,
+                #                                                                     i + 1:i + max_label_length - 1][:,
+                #                                                                     :, None].repeat(1, 1,
+                #                                                                                     contextual_inputs.shape[
+                #                                                                                         -1]), 1)
+                # torch.sum(attention_mask[:, i + 1:i + max_label_length - 1], -1)
+                weight = self.eval_param('weight', context_embedding=c)
+                # weight = self.eval_param('weight', context_embedding=contextual_inputs[:,i+1,:])
+                # weight = self.eval_param('weight', context_embedding=contextual_inputs[:,i,:])
+                bias = self.eval_param('bias', context_embedding=c)
+                # bias = self.eval_param('bias', context_embedding=contextual_inputs[:,i+1,:])
+                # bias = self.eval_param('bias', context_embedding=contextual_inputs[:,i,:])
+            else:
+                weight = torch.cat((weight, self.eval_param('weight', context_embedding=c)), 2)
+                # weight = torch.cat((weight, self.eval_param('weight', context_embedding=contextual_inputs[:,i+1,:])), 2)
+                # weight = torch.cat((weight, self.eval_param('weight', context_embedding=contextual_inputs[:,i,:])), 2)
+                bias = torch.cat((bias, self.eval_param('bias', context_embedding=c)), 1)
+                # bias = torch.cat((bias, self.eval_param('bias', context_embedding=contextual_inputs[:,i+1,:])), 1)
+                # bias = torch.cat((bias, self.eval_param('bias', context_embedding=contextual_inputs[:,i,:])), 1)
+
+        c = torch.sum(contextual_inputs[:, max_length:, :] * attention_mask[:,max_length:][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1) / torch.sum(attention_mask[:, max_length:], -1)[:,None].repeat(1,contextual_inputs.shape[-1])
+        c = torch.cat((c, pred_input), 1)
+        # output = self.pred_linear[0](pred_input)
+        # output = self.pred_linear[1](output,c)
+        # output = self.pred_linear[2](output)
+        # output = self.pred_linear[3](output)
+        output = self.pred_linear(pred_input,c)
+
+        return torch.matmul(output[:,None,:], weight).squeeze(1) +bias
+        # return F.linear(output, weight, bias)
 
 
 class BertSelfOutputAdaptersMixin:
@@ -356,7 +478,7 @@ class BertOutputAdaptersMixin:
             return self.layer_text_task_adapters[adapter_name]
         return None
 
-    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack, context_embedding=None):
+    def adapter_stack_layer(self, hidden_states, input_tensor, adapter_stack, context_embedding=None, split_pos=None):
         """
         One layer of stacked adapters. This either passes through a single adapter and prepares the data to be passed
         into a subsequent adapter, or the next transformer layer
@@ -374,16 +496,41 @@ class BertOutputAdaptersMixin:
         """
         # We assume that all adapters have the same residual connection and layer norm setting as the first adapter in
         # the stack
-        adapter_config = self.config.adapters.get(adapter_stack[0])
+
+        if '|' in adapter_stack[0]:
+            adapter_names = adapter_stack[0].split('|')
+            adapter_config = self.config.adapters.get(adapter_names[0])
+
+        else:
+            adapter_names = None
+            adapter_config = self.config.adapters.get(adapter_stack[0])
 
         hidden_states, query, residual = self.get_adapter_preparams(adapter_config, hidden_states, input_tensor)
 
         if len(adapter_stack) == 1:
+            if adapter_names is None:
+                adapter_layer = self.get_adapter_layer(adapter_stack[0])
+                adapter_layer2 = None
+            else:
+                adapter_layer = self.get_adapter_layer(adapter_names[0])
+                adapter_layer2 = self.get_adapter_layer(adapter_names[1])
 
-            adapter_layer = self.get_adapter_layer(adapter_stack[0])
+                hidden_states, hidden_states2 = hidden_states[:,:split_pos, :], hidden_states[:,split_pos:, :]
+                residual, residual2 = residual[:,:split_pos, :], residual[:,split_pos:, :]
+
+
             if adapter_layer is not None:
+                if context_embedding is not None:
+                    context_embedding = torch.cat((context_embedding, self.previous_context_embedding), -1)
+
                 hidden_states, _, _ = adapter_layer(
                         hidden_states, residual_input=residual, context_embedding=context_embedding)
+
+            if adapter_layer2 is not None:
+                hidden_states2, _, _ = adapter_layer(
+                    hidden_states2, residual_input=residual2, context_embedding=context_embedding)
+
+                hidden_states = torch.cat((hidden_states, hidden_states2), 1)
 
             return hidden_states
 
@@ -426,12 +573,17 @@ class BertOutputAdaptersMixin:
     def adapters_forward(self, hidden_states, input_tensor,
                          adapter_names=None,
                          cpg_environments=None,
-                         language=None):
+                         language=None,
+                         context_embedding=None,
+                         split_pos=None
+                         ):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
 
-            flat_adapter_names = [item for sublist in adapter_names for item in sublist]
+
+            # flat_adapter_names = [item for sublist in adapter_names for item in sublist]
+            flat_adapter_names = [item.split('|')[0] for sublist in adapter_names for item in sublist]
 
         if adapter_names is not None and (
             len(
@@ -444,23 +596,25 @@ class BertOutputAdaptersMixin:
             for adapter_stack in adapter_names:
                 #logging.info('Initialising adapter_stack "%s" with cpg_environments %s' % (
                 #        adapter_stack, str(cpg_environments)))
-                if cpg_environments and adapter_stack[0] in cpg_environments:
-                    assert language is not None
-                    context = {'language': language}
-                    context_embedding = cpg_environments[adapter_stack[0]](context)
-                else:
-                    context_embedding = None
+                # if cpg_environments and adapter_stack[0] in cpg_environments:
+                #     assert language is not None
+                #     context = {'language': language}
+                #     context_embedding = cpg_environments[adapter_stack[0]](context)
+                # else:
+                #     context_embedding = None
 
                 hidden_states = self.adapter_stack_layer(
-                    hidden_states, input_tensor, adapter_stack, context_embedding=context_embedding
+                    hidden_states, input_tensor, adapter_stack, context_embedding=context_embedding,split_pos=split_pos
                 )
 
-            last_config = self.config.adapters.get(adapter_names[-1][-1])
+            last_config = self.config.adapters.get(adapter_names[-1][-1].split('|')[0])
             if last_config["original_ln_after"]:
                 hidden_states = self.LayerNorm(hidden_states + input_tensor)
 
         else:
             hidden_states = self.LayerNorm(hidden_states + input_tensor)
+
+        self.previous_context_embedding = hidden_states[:,0,:]
 
         return hidden_states
 
@@ -565,9 +719,10 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
         """
         if not AdapterType.has(adapter_type):
             raise ValueError("Invalid adapter type {}".format(adapter_type))
-        if not self.config.adapters.get_config(adapter_type):
-            self.config.adapters.set_config(adapter_type, config or DEFAULT_ADAPTER_CONFIG)
-        config = self.config.adapters.get_config(adapter_type)
+        if config is None:
+            if not self.config.adapters.get_config(adapter_type):
+                self.config.adapters.set_config(adapter_type, config or DEFAULT_ADAPTER_CONFIG)
+            config = self.config.adapters.get_config(adapter_type)
         self.config.adapters.add(adapter_name, adapter_type, config=config)
         if adapter_type == AdapterType.text_lang and config.get('cpg', None):
             self.add_cpg_environment(adapter_name, config['cpg'])
@@ -689,6 +844,24 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
         }
         self.add_prediction_head(head_name, config, overwrite_ok)
 
+    def add_cpg_head(self,
+                     head_name, layers=2, activation_function="tanh"
+                     , bias=True, max_length=None, max_label_length=None, overwrite_ok=False,
+                     ):
+        config = {
+            "head_type": "cpg",
+            "num_choices": None,
+            "layers": layers,
+            "activation_function": activation_function,
+        }
+        self.add_prediction_head(head_name,
+                                 config,
+                                 overwrite_ok,
+                                 cpg=True,
+                                 bias=bias,
+                                 max_label_length=max_label_length,
+                                 max_length=max_length)
+
     def add_multiple_choice_head(
         self, head_name, num_choices=2, layers=2, activation_function="tanh", overwrite_ok=False,
     ):
@@ -741,13 +914,27 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
         self.add_prediction_head(head_name, config, overwrite_ok)
 
     def add_prediction_head(
-        self, head_name, config, overwrite_ok=False,
+            self,
+            head_name,
+            config,
+            overwrite_ok=False,
+            cpg=False,
+            bias=None,
+            max_label_length=None,
+            max_length=None,
     ):
         if head_name not in self.config.prediction_heads or overwrite_ok:
             self.config.prediction_heads[head_name] = config
 
             logger.info(f"Adding head '{head_name}' with config {config}.")
-            self._add_prediction_head_module(head_name)
+            if 'cpg' in head_name:
+                cpg=True
+                bias=True
+            self._add_prediction_head_module(head_name,
+                                             cpg=cpg,
+                                             bias=bias,
+                                             max_length=max_length,
+                                             max_label_length=max_label_length)
             self.active_head = head_name
 
         else:
@@ -755,27 +942,45 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
                 f"Model already contains a head with name '{head_name}'. Use overwrite_ok=True to force overwrite."
             )
 
-    def _add_prediction_head_module(self, head_name):
+    def _add_prediction_head_module(self,
+                                    head_name,
+                                    cpg=False,
+                                    bias=None,
+                                    max_label_length=None,
+                                    max_length=None,
+                                    ):
         head_config = self.config.prediction_heads.get(head_name)
 
         pred_head = []
-        for l in range(head_config["layers"]):
-            pred_head.append(nn.Dropout(self.config.hidden_dropout_prob))
-            if l < head_config["layers"] - 1:
-                pred_head.append(nn.Linear(self.config.hidden_size, self.config.hidden_size))
-                pred_head.append(Activation_Function_Class(head_config["activation_function"]))
-            else:
-                if "num_labels" in head_config:
-                    pred_head.append(nn.Linear(self.config.hidden_size, head_config["num_labels"]))
-                else:  # used for multiple_choice head
-                    pred_head.append(nn.Linear(self.config.hidden_size, 1))
+        if not cpg:
+            for l in range(head_config["layers"]):
+                pred_head.append(nn.Dropout(self.config.hidden_dropout_prob))
+                if l < head_config["layers"] - 1:
+                    pred_head.append(nn.Linear(self.config.hidden_size, self.config.hidden_size))
+                    pred_head.append(Activation_Function_Class(head_config["activation_function"]))
+                else:
+                    if "num_labels" in head_config:
+                        pred_head.append(nn.Linear(self.config.hidden_size, head_config["num_labels"]))
+                    else:  # used for multiple_choice head
+                        pred_head.append(nn.Linear(self.config.hidden_size, 1))
+
+        else:
+            pred_head.append(Head(self.config.hidden_size,
+                                     bias=bias,
+                                     config=None,
+                                     max_length=max_length,
+                                     max_label_length=max_label_length,
+                                     layers=head_config["layers"],
+                                     activation_function=Activation_Function_Class(head_config["activation_function"]),
+                                     hidden_dropout_prob=self.config.hidden_dropout_prob
+                                     ) )
 
         self.heads[head_name] = nn.Sequential(*pred_head)
 
         self.heads[head_name].apply(self._init_weights)
         self.heads[head_name].train(self.training)  # make sure training mode is consistent
 
-    def forward_head(self, outputs, head_name=None, attention_mask=None, labels=None):
+    def forward_head(self, outputs, head_name=None, attention_mask=None, labels=None, contextual_inputs=None, attention_mask_=None):
         head_name = head_name or self.active_head
         if not head_name:
             logger.debug("No prediction head is used.")
@@ -788,7 +993,7 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
 
         sequence_output = outputs[0]
 
-        if head["head_type"] == "classification":
+        if head["head_type"] == "classification" :
             logits = self.heads[head_name](sequence_output[:, 0])
 
             outputs = (logits,) + outputs[2:]
@@ -800,6 +1005,15 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
                 else:
                     loss_fct = CrossEntropyLoss()
                     loss = loss_fct(logits.view(-1, head["num_labels"]), labels.view(-1))
+                outputs = (loss,) + outputs
+
+        elif head["head_type"] == "cpg":
+            logits = self.heads[head_name][0](pred_input=sequence_output[:, 0], contextual_inputs=contextual_inputs, attention_mask=attention_mask_)
+
+            outputs = (logits,) + outputs[2:]
+            if labels is not None:
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(logits, labels.view(-1))
                 outputs = (loss,) + outputs
 
         elif head["head_type"] == "multilabel_classification":

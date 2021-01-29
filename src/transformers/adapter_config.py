@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class CpgConfig(Mapping):
 
     language_embedding_dim: int
-    languages: List[str]
+    languages: Optional[List[str]] = None
     layer_embedding_dim: Optional[int] = None
     use_typology: Optional[bool] = False
 
@@ -25,12 +25,12 @@ class CpgConfig(Mapping):
     # therefore, we don't allow changing attribute values if set once.
     def __setattr__(self, name, value):
         if name in self.__dict__:
-            raise frozeninstanceerror()
+            raise FrozenInstanceError()
         else:
             object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        raise frozeninstanceerror()
+        raise FrozenInstanceError()
 
     def __getitem__(self, key):
         return self.__dict__[key]
@@ -54,12 +54,12 @@ class InvertibleAdapterConfig(Mapping):
     # therefore, we don't allow changing attribute values if set once.
     def __setattr__(self, name, value):
         if name in self.__dict__:
-            raise frozeninstanceerror()
+            raise FrozenInstanceError()
         else:
             object.__setattr__(self, name, value)
 
     def __delattr__(self, name):
-        raise frozeninstanceerror()
+        raise FrozenInstanceError()
 
     def __getitem__(self, key):
         return self.__dict__[key]
@@ -151,6 +151,29 @@ class AdapterConfig(Mapping):
         config_dict.update((k, v) for k, v in kwargs.items() if v is not None)
         return AdapterConfig.from_dict(config_dict)
 
+
+@dataclass
+class CpgAdapterConfig(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = False
+    non_linearity: str = "gelu"
+    reduction_factor: int = 16
+    context_dim: int = 768
+    cpg: Optional[CpgConfig] = CpgConfig(
+        language_embedding_dim=context_dim,
+    )
 
 @dataclass
 class TestCpgConfig(AdapterConfig):

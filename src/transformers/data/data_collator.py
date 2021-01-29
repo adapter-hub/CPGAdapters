@@ -16,6 +16,88 @@ and collate them into a batch, as a dictionary of Tensors.
 DataCollator = NewType("DataCollator", Callable[[List[InputDataClass]], Dict[str, torch.Tensor]])
 
 
+class CPGCollator:
+
+    def __init__(self, max_length, max_label_length, noneoftheabove=None, train=False,hp_dict=None ):
+        self.hp_dict=hp_dict
+        self.max_length =max_length
+        self.max_label_length = max_label_length
+        self.noneoftheabove = noneoftheabove
+
+        self.train = train
+
+    def default_data_collator(self, features: List[InputDataClass], language=None) -> Dict[str, torch.Tensor]:
+        """
+        Very simple data collator that:
+        - simply collates batches of dict-like objects
+        - Performs special handling for potential keys named:
+            - `label`: handles a single value (int or float) per object
+            - `label_ids`: handles a list of values per object
+        - does not do any additional preprocessing
+
+        i.e., Property names of the input object will be used as corresponding inputs to the model.
+        See glue and ner for example of how it's useful.
+        """
+
+        # In this function we'll make the assumption that all `features` in the batch
+        # have the same attributes.
+        # So we will look at the first element as a proxy for what attributes exist
+        # on the whole batch.
+        if not isinstance(features[0], dict):
+            features = [vars(f) for f in features]
+
+        first = features[0]
+        batch = {}
+
+        # Special handling for labels.
+        # Ensure that tensor is created with the correct type
+        # (it should be automatically the case, but let's make sure of it.)
+        if "label" in first and first["label"] is not None:
+            label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
+            dtype = torch.long if isinstance(label, int) else torch.float
+            batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
+        elif "label_ids" in first and first["label_ids"] is not None:
+            if isinstance(first["label_ids"], torch.Tensor):
+                batch["labels"] = torch.stack([f["label_ids"] for f in features])
+            else:
+                dtype = torch.long if type(first["label_ids"][0]) is int else torch.float
+                batch["labels"] = torch.tensor([f["label_ids"] for f in features], dtype=dtype)
+
+        if self.train:
+            import random
+            nr_labels = (len(features[0]['input_ids']) - self.max_length) // self.max_label_length
+            for f in features:
+
+                if self.hp_dict['sample_nota'] and  random.random() < self.hp_dict['nota_prob']:
+
+                    a = set(range(nr_labels))
+                    a.discard(f['label'])
+
+                    pos = f['label'] if random.random() > 0.5 else random.choice(list(a))
+
+                    start = pos * self.max_label_length + self.max_length
+                    end = pos * self.max_label_length + self.max_length + self.max_label_length
+
+                    f['input_ids'][start:end] = self.noneoftheabove['input_ids'][0]
+
+                    f['attention_mask'][start:end] = self.noneoftheabove['attention_mask'][0]
+
+
+
+        # Handling of all other possible keys.
+        # Again, we will use the first element to figure out which key/values are not None for this model.
+        for k, v in first.items():
+            if k not in ("label", "label_ids") and v is not None and not isinstance(v, str):
+                if isinstance(v, torch.Tensor):
+                    batch[k] = torch.stack([f[k] for f in features])
+                else:
+                    batch[k] = torch.tensor([f[k] for f in features], dtype=torch.long)
+
+        # batch["language"] = language
+
+        return batch
+
+
 def default_data_collator(features: List[InputDataClass], language=None) -> Dict[str, torch.Tensor]:
     """
     Very simple data collator that:
@@ -62,7 +144,7 @@ def default_data_collator(features: List[InputDataClass], language=None) -> Dict
             else:
                 batch[k] = torch.tensor([f[k] for f in features], dtype=torch.long)
 
-    batch["language"] = language
+    # batch["language"] = language
 
     return batch
 

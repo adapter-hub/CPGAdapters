@@ -59,7 +59,8 @@ class RobertaEmbeddings(BertEmbeddings):
             config.max_position_embeddings, config.hidden_size, padding_idx=self.padding_idx
         )
 
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None):
+    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None,
+        max_length = None, max_label_length = None, label_embedder = None ):
         if position_ids is None:
             if input_ids is not None:
                 # Create the position ids from the input token ids. Any padded tokens remain padded.
@@ -68,7 +69,8 @@ class RobertaEmbeddings(BertEmbeddings):
                 position_ids = self.create_position_ids_from_inputs_embeds(inputs_embeds)
 
         return super().forward(
-            input_ids, token_type_ids=token_type_ids, position_ids=position_ids, inputs_embeds=inputs_embeds
+            input_ids, token_type_ids=token_type_ids, position_ids=position_ids, inputs_embeds=inputs_embeds,
+            max_length=max_length, max_label_length=max_label_length, label_embedder=label_embedder
         )
 
     def create_position_ids_from_inputs_embeds(self, inputs_embeds):
@@ -200,20 +202,62 @@ class RobertaModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
         attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
         token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
         position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
+        
+        if not self.config.hp_dict['only_head']:
 
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            adapter_names=adapter_names,
-        )
+            if self.config.hp_dict['label_adapter']:
+                cpg_adapter_name = 'cpg|labels'
+            else:
+                cpg_adapter_name = 'cpg|cpg'
 
-        outputs = self.forward_head(outputs, head_name=head, attention_mask=attention_mask, labels=labels,)
+            cpg_outputs = self.roberta(
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                adapter_names=[cpg_adapter_name],
+                max_length=self.heads[list(self.heads)[0]][0].max_length,
+                max_label_length=self.heads[list(self.heads)[0]][0].max_label_length,
+                label_embedder=self.heads[list(self.heads)[0]][0].label_embedder,
+                split_pos=self.heads[list(self.heads)[0]][0].max_length
+            )
+
+            # attention_mask_ = attention_mask.clone()
+            attention_mask_ = torch.tensor(torch.sum(torch.stack([torch.tensor((input_ids == val), dtype=torch.long) for val in range(5)]), 0) == 0, dtype=torch.long).cuda()
+
+            if not self.config.hp_dict['pass_label_into_classifer']:
+                attention_mask = attention_mask[:,:self.heads[self.active_adapters[0][0]]._modules['0'].max_length]
+                input_ids = input_ids[:,:self.heads[self.active_adapters[0][0]]._modules['0'].max_length]
+                max_length=None
+                max_label_length = None
+                label_embedder = None
+            else:
+                max_length = self.heads[list(self.heads)[0]][0].max_length,
+                max_label_length=self.heads[list(self.heads)[0]][0].max_label_length
+                label_embedder=self.heads[list(self.heads)[0]][0].label_embedder
+
+
+            outputs = self.roberta(
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                adapter_names=adapter_names,
+                context_embedding= cpg_outputs[1],
+                max_length=max_length,
+                max_label_length=max_label_length,
+                label_embedder=label_embedder
+            )
+
+        outputs = self.forward_head(outputs, head_name=head, attention_mask=attention_mask, labels=labels, contextual_inputs=cpg_outputs[0], attention_mask_=attention_mask_)
 
         return outputs
 

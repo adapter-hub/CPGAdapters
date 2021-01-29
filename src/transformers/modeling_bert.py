@@ -170,7 +170,8 @@ class BertEmbeddings(nn.Module):
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None):
+    def forward(self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None,
+                max_length=None, max_label_length=None, label_embedder=None):
         if input_ids is not None:
             input_shape = input_ids.size()
         else:
@@ -186,8 +187,18 @@ class BertEmbeddings(nn.Module):
 
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
+
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        # nr_classes = (input_shape[-1] - max_length) / max_label_length
+        # label_ids = torch.tensor([[i+2] * max_label_length for i in range(int(nr_classes))]).cuda().view(1,-1)
+        # # label_ids2 = torch.tensor([list(range(2,max_label_length+2)) for i in range(int(nr_classes))]).cuda().view(1, -1)
+        # label_embs = self.position_embeddings(label_ids.view(-1))
+        # # label_embs2 = self.position_embeddings(label_ids2.view(-1))
+        # # label_embs = label_embedder(torch.cat((label_embs[None,:,:].repeat(input_shape[0], 1, 1), position_embeddings[:, max_length:, :]), -1))
+        # label_embs = label_embedder(label_embs[None,:,:].repeat(input_shape[0], 1, 1))
+        # position_embeddings[:, max_length:, :] += label_embs
 
         embeddings = inputs_embeds + position_embeddings + token_type_embeddings
         embeddings = self.LayerNorm(embeddings)
@@ -375,6 +386,8 @@ class BertOutput(nn.Module, BertOutputAdaptersMixin):
             adapter_names=None,
             cpg_environments=None,
             language=None,
+            context_embedding=None,
+                         split_pos=None
     ):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -384,6 +397,8 @@ class BertOutput(nn.Module, BertOutputAdaptersMixin):
                 adapter_names=adapter_names,
                 cpg_environments=cpg_environments,
                 language=language,
+                context_embedding=context_embedding,
+                         split_pos=split_pos
         )
         return hidden_states
 
@@ -409,6 +424,8 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
         adapter_names=None,
         cpg_environments=None,
         language=None,
+        context_embedding=None,
+                         split_pos=None
     ):
         self_attention_outputs = self.attention(
             hidden_states, attention_mask, head_mask,
@@ -439,6 +456,8 @@ class BertLayer(BertLayerAdaptersMixin, nn.Module):
                 adapter_names=adapter_names,
                 cpg_environments=cpg_environments,
                 language=language,
+            context_embedding=context_embedding,
+                         split_pos=split_pos
         )
         outputs = (layer_output,) + outputs
         return outputs
@@ -461,7 +480,9 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
         output_hidden_states=False,
         adapter_names=None,
         cpg_environments=None,
-        language=None
+        language=None,
+        context_embedding=None,
+            split_pos=None
     ):
         all_hidden_states = ()
         all_attentions = ()
@@ -499,6 +520,8 @@ class BertEncoder(BertEncoderAdaptersMixin, nn.Module):
                     adapter_names=adapter_names,
                     cpg_environments=cpg_environments,
                     language=language,
+                    context_embedding=context_embedding,
+                    split_pos=split_pos
                 )
             hidden_states = layer_outputs[0]
 
@@ -717,6 +740,8 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
         self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
 
+        # self.label_embedder = nn.Linear(self.config.hidden_size, self.config.hidden_size)
+
         self._init_adapter_modules()
 
         self.init_weights()
@@ -759,7 +784,12 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
-        language=None
+        language=None,
+        context_embedding=None,
+        max_length=None,
+        max_label_length=None,
+            label_embedder=None,
+            split_pos=None
     ):
         r"""
     Return:
@@ -836,8 +866,35 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
-            input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
+            input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds,
+            max_length=max_length, max_label_length=max_label_length, label_embedder=label_embedder
         )
+
+        if max_label_length is not None:
+
+            nr_classes = (input_shape[-1] - max_length) / max_label_length
+            label_ids = torch.tensor([[i+2] * max_label_length for i in range(int(nr_classes))]).cuda().view(1,-1)
+            # label_ids2 = torch.tensor([list(range(max_label_length)) for i in range(int(nr_classes))]).cuda().view(1, -1)
+            # label_ids3 = torch.tensor([[0] * max_label_length for i in range(int(nr_classes))]).cuda().view(1,-1)
+            label_embs = self.embeddings.position_embeddings(label_ids.view(-1))
+            # label_embs2 = self.embeddings.position_embeddings(label_ids2.view(-1))
+            # label_embs = label_embedder(torch.cat((label_embs, label_embs2), -1))
+            #
+            # embedding_output[:, max_length:, :] = self.embeddings.LayerNorm( label_embedder(
+            #     torch.cat((label_embs[None, :, :].repeat(input_shape[0], 1, 1), embedding_output[:, max_length:, :]),
+            #               -1),
+            #     embedding_output[:, max_length:, :]
+            # )[0])
+
+            embedding_output[:, max_length:, :] += label_embedder(label_embs)
+
+        # embedding_output[:, max_length:, :] = self.embeddings.LayerNorm(label_embedder(
+        #     embedding_output[:, max_length:, :],
+        #     embedding_output[:, max_length:, :]
+        # )[0])
+
+        # type_embs = self.embeddings.token_type_embeddings(label_ids3.view(-1))
+        # embedding_output[:, max_length:, :] =  self.embeddings.dropout(self.embeddings.LayerNorm(type_embs + label_embs + self.embeddings.word_embeddings(input_ids[:,max_length:])))
 
         # TODO: Currently no fusion over invertible adapters, takes only very first language adapter position
         if adapter_names is not None and len(adapter_names) > 0:
@@ -845,8 +902,8 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
 
             if adapter_names[0][0] in self.invertible_lang_adapters:
                 adapter_name = adapter_names[0][0]
-                context_embedding = self.get_context_embedding(
-                        adapter_name, language=language)
+                # context_embedding = self.get_context_embedding(
+                #         adapter_name, language=language)
                 embedding_output = self.invertible_lang_adapters[adapter_name](
                         embedding_output, rev=False, context_embedding=context_embedding)
 
@@ -860,7 +917,9 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             adapter_names=adapter_names,
             cpg_environments=self.cpg_environments,
-            language=language
+            language=language,
+            context_embedding=context_embedding,
+            split_pos=split_pos
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)

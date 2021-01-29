@@ -180,6 +180,7 @@ class Trainer:
         model: PreTrainedModel,
         args: TrainingArguments,
         data_collator: Optional[DataCollator] = None,
+        data_collator_class = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Dataset] = None,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
@@ -191,10 +192,13 @@ class Trainer:
         adapter_names: Optional[List[List[str]]] = None,
         tb_writer: Optional["SummaryWriter"] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = None,
+            hp_dict=None
     ):
         self.model = model.to(args.device)
         self.args = args
+        self.hp_dict=hp_dict
         self.data_collator = data_collator if data_collator is not None else default_data_collator
+        self.data_collator_class = data_collator_class
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
         self.compute_metrics = compute_metrics
@@ -261,6 +265,8 @@ class Trainer:
             collate_fn = self.data_collator
             batch_size = self.args.train_batch_size
 
+        self.data_collator_class.train = True
+
         data_loader = DataLoader(
             self.train_dataset,
             batch_size=batch_size,
@@ -300,6 +306,8 @@ class Trainer:
             collate_fn = self.data_collator
             batch_size = self.args.eval_batch_size
 
+        self.data_collator_class.train = False
+
         data_loader = DataLoader(
             eval_dataset,
             sampler=sampler,
@@ -333,6 +341,8 @@ class Trainer:
                 sampler = SequentialSampler(test_dataset)
             collate_fn = self.data_collator
             batch_size = self.args.eval_batch_size
+
+        self.data_collator_class.train = False
 
         data_loader = DataLoader(
             test_dataset,
@@ -460,10 +470,6 @@ class Trainer:
                 output_device=self.args.local_rank,
                 find_unused_parameters=True,
             )
-
-        if self.tb_writer is not None:
-            self.tb_writer.add_text("args", self.args.to_json_string())
-            self.tb_writer.add_hparams(self.args.to_sanitized_dict(), metric_dict={})
 
         # Train!
         if is_torch_tpu_available():
@@ -632,21 +638,21 @@ class Trainer:
         if self.global_step is None:
             # when logging evaluation metrics without training
             self.global_step = 0
-        if self.tb_writer:
-            for k, v in logs.items():
-                if isinstance(v, (int, float)):
-                    self.tb_writer.add_scalar(k, v, self.global_step)
-                else:
-                    logger.warning(
-                        "Trainer is attempting to log a value of "
-                        '"%s" of type %s for key "%s" as a scalar. '
-                        "This invocation of Tensorboard's writer.add_scalar() "
-                        "is incorrect so we dropped this attribute.",
-                        v,
-                        type(v),
-                        k,
-                    )
-            self.tb_writer.flush()
+        # if self.tb_writer:
+        #     for k, v in logs.items():
+        #         if isinstance(v, (int, float)):
+        #             self.tb_writer.add_scalar(k, v, self.global_step)
+        #         else:
+        #             logger.warning(
+        #                 "Trainer is attempting to log a value of "
+        #                 '"%s" of type %s for key "%s" as a scalar. '
+        #                 "This invocation of Tensorboard's writer.add_scalar() "
+        #                 "is incorrect so we dropped this attribute.",
+        #                 v,
+        #                 type(v),
+        #                 k,
+        #             )
+        #     self.tb_writer.flush()
         if is_wandb_available():
             if self.is_world_master():
                 wandb.log(logs, step=self.global_step)
