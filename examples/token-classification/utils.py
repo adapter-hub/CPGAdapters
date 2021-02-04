@@ -16,6 +16,7 @@
 """ Named entity recognition fine-tuning: utilities to work with CoNLL-2003 task. """
 
 
+import glob
 import logging
 import os
 from dataclasses import dataclass
@@ -92,7 +93,6 @@ if is_torch_available():
             model_type: str,
             max_seq_length: Optional[int] = None,
             overwrite_cache=False,
-            language=None,
             mode: Union[Split, str] = Split.train,
         ):
             if isinstance(mode, Split):
@@ -112,7 +112,7 @@ if is_torch_available():
                     self.features = torch.load(cached_features_file)
                 else:
                     logger.info(f"Creating features from dataset file at {data_dir}")
-                    examples = read_examples_from_file(task, data_dir, mode, language=language)
+                    examples = read_examples_from_file(task, data_dir, mode)
                     # TODO clean up all this to leverage built-in features of tokenizers
                     self.features = convert_examples_to_features(
                         examples,
@@ -235,13 +235,13 @@ if is_tf_available():
             return self.features[i]
 
 
-def read_examples_from_file(task, data_dir, mode: Union[Split, str], language=None) -> List[InputExample]:
+def read_examples_from_file(task, data_dir, mode: Union[Split, str]) -> List[InputExample]:
     if isinstance(mode, Split):
         mode = mode.value
     if task == 'ner':
         return read_ner_examples_from_file(data_dir, mode)
     elif task == 'udpos':
-        return read_udpos_examples_from_file(data_dir, mode, language)
+        return read_udpos_examples_from_file(data_dir, mode)
     else:
         raise ValueError('Unrecognised task name: "%s"' % task)
 
@@ -273,20 +273,34 @@ def read_ner_examples_from_file(data_dir, mode):
     return examples
 
 
-def read_udpos_examples_from_file(data_dir, mode, language):
-    file_path = os.path.join(data_dir, f"{language}-ud-{mode}.conllu")
+def read_udpos_examples_from_file(data_dir, mode):
+    pattern = f'{data_dir}/*-ud-{mode}.conllu'
+    matching_files = list(glob.glob(pattern))
+    if len(matching_files) != 1:
+        raise Exception(f'There should be exactly one file matching pattern '
+                        f'{pattern}, instead the following files match: {matching_files}')
+    file_path = matching_files[0]
     corpus = pyconll.load_from_file(file_path)
+    upos_labels = set(get_labels('udpos'))
 
     examples = []
     for i, sentence in enumerate(corpus):
         words = []
         labels = []
+        corrupt = False
         for token in sentence:
-            if token.upos is not None:
-                words.append(token.form)
-                labels.append(token.upos)
-        guid = f'{mode}-{i}'
-        examples.append(InputExample(guid=guid, words=words, labels=labels))
+            if token.upos is None:
+                continue
+            if token.upos not in upos_labels or token.form is None:
+                logging.warn('upos = %s, xpos = %s' % (token.upos, token.xpos))
+                logging.warn(sentence.conll())
+                corrupt = True
+                break
+            words.append(token.form)
+            labels.append(token.upos)
+        if not corrupt:
+            guid = f'{mode}-{i}'
+            examples.append(InputExample(guid=guid, words=words, labels=labels))
 
     return examples
 
@@ -429,6 +443,6 @@ def get_labels(task: str, path: str = None) -> List[str]:
     elif task == "ner":
         return ["O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
     elif task == "udpos":
-        return ['ADJ', 'ADP', 'ADV', 'AUX', 'CONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART',
+        return ['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART',
                 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X']
 

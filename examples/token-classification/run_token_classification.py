@@ -238,7 +238,6 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.train,
-            language=adapter_args.language,
         )
         if training_args.do_train
         else None
@@ -253,7 +252,6 @@ def main():
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=data_args.eval_split,
-            language=adapter_args.language,
         )
         if training_args.do_eval
         else None
