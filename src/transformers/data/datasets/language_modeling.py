@@ -51,8 +51,14 @@ class TextDataset(Dataset):
                 logger.info(f"Creating features from dataset file at {directory}")
 
                 self.examples = []
+                lines = []
                 with open(file_path, encoding="utf-8") as f:
-                    text = f.read()
+                    for line in f:
+                        tokens = line.strip().split()
+                        if len(tokens) < 10:
+                            continue
+                        lines.append(line.strip())
+                text = '\n'.join(lines)
 
                 tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
 
