@@ -323,10 +323,6 @@ def main():
             else None
         )
         trainer.train(model_path=model_path)
-        if not data_args.freeze_embeddings:
-            embeddings_2 = model.bert.embeddings.word_embeddings.weight.clone().cpu()
-            logging.info('Embeddings:\n%s' % str(embeddings_2))
-            assert not torch.all(embeddings_2 == embeddings_1)
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)
