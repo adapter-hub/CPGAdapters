@@ -175,9 +175,19 @@ class TestCpgConfig(AdapterConfig):
     #)
     cpg: Optional[CpgConfig] = CpgConfig(
         language_embedding_dim=32,
-        languages=[
-                'ar', 'bg', 'cdo', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'gn', 'hr', 'ilo', 'is', 'it',
-                'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'],
+        #languages=[
+        #        'ar', 'bg', 'cdo', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'gn', 'hr', 'ilo', 'is', 'it',
+        #        'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'],
+        languages = ["en", "ceb", "vi", "ja", "arz", "zh", "ko", "fi", "tr", "eu", "ce",
+                     "ka", "th", "ta", "ht", "sw", "qu", "mn", "nv", "nci", "ab", "ay",
+                     "gn", "atj", "fr", "km", "ha", "new", "hu", "tt", "lez", "xmf",
+                     "shn", "te", "yo", "bxr", "kbd", "ru", "war", "sat", "kab", "my",
+                     "mrj", "uz", "av", "lo", "tcy", "nso", "xal", "fa", "id", "so", "bo",
+                     "se", "cv", "lbe", "za", "ml", "sn", "hy", "ms", "ar", "nan", "myv",
+                     "sah", "inh", "kn", "zu", "el", "min", "om", "kv", "azb", "ln", "la",
+                     "mg", "he", "wuu", "et", "kk", "ig", "cy", "tl", "am", "cdo", "mhr",
+                     "ug", "rw", "sq", "jv", "mt", "hak", "smn" ,"tyv", "kbp", "sv", "su",
+                     "ary"],
         use_typology=False)
 
 
@@ -233,9 +243,16 @@ class UrielCpgConfig(AdapterConfig):
     #)
     cpg: Optional[CpgConfig] = CpgConfig(
         language_embedding_dim=32,
-        languages=[
-                'ar', 'bg', 'cdo', 'da', 'de', 'en', 'es', 'et', 'fa', 'fr', 'gn', 'hr', 'ilo', 'is', 'it',
-                'ja', 'jv', 'ko', 'mhr', 'mi', 'my', 'nl', 'qu', 'ru', 'sw', 'tk', 'xmf', 'zh'],
+        languages = ["en", "ceb", "vi", "ja", "arz", "zh", "ko", "fi", "tr", "eu", "ce",
+                     "ka", "th", "ta", "ht", "sw", "qu", "mn", "nv", "nci", "ab", "ay",
+                     "gn", "atj", "fr", "km", "ha", "new", "hu", "tt", "lez", "xmf",
+                     "shn", "te", "yo", "bxr", "kbd", "ru", "war", "sat", "kab", "my",
+                     "mrj", "uz", "av", "lo", "tcy", "nso", "xal", "fa", "id", "so", "bo",
+                     "se", "cv", "lbe", "za", "ml", "sn", "hy", "ms", "ar", "nan", "myv",
+                     "sah", "inh", "kn", "zu", "el", "min", "om", "kv", "azb", "ln", "la",
+                     "mg", "he", "wuu", "et", "kk", "ig", "cy", "tl", "am", "cdo", "mhr",
+                     "ug", "rw", "sq", "jv", "mt", "hak", "smn" ,"tyv", "kbp", "sv", "su",
+                     "ary"],
         use_typology=True)
 
 
