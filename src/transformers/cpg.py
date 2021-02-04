@@ -49,16 +49,17 @@ class UrielMlpProperty(nn.Module):
             else:
                 assert len(vec) == self.n_features
         self.layer_1 = nn.Linear(self.n_features, self.dim)
-        self.layer_2 = nn.Linear(self.dim, self.dim)
-        self.dropout = nn.Dropout(dropout)
+
+    def _get_features(self, language):
+        if language not in self.features:
+            self.features[language] = torch.Tensor(l2v.get_features(
+                language, 'syntax_knn+phonology_knn+inventory_knn')[language])
+        return self.features[language]
+
 
     def forward(self, language):
-        features = self.features[language].to(self.layer_1.weight.device)
+        features = self._get_features(language).to(self.layer_1.weight.device)
         embedding = self.layer_1(features)
-        embedding = F.relu(embedding)
-        embedding = self.layer_2(embedding)
-        embedding = F.relu(embedding)
-        embedding = self.dropout(embedding)
         return embedding
 
 
