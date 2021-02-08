@@ -21,6 +21,9 @@ class AdapterArguments:
     adapter_reduction_factor: Optional[int] = field(
         default=None, metadata={"help": "Override the reduction factor of the adapter configuration."}
     )
+    adapter_omit_final_layer: bool = field(
+        default=False, metadata={'help': 'Omit the last adapter layer.'}
+    )
     language: Optional[str] = field(default=None, metadata={"help": "The training language, e.g. 'en' for English."})
 
 
@@ -41,4 +44,7 @@ class MultiLingAdapterArguments(AdapterArguments):
     )
     lang_adapter_reduction_factor: Optional[int] = field(
         default=None, metadata={"help": "Override the reduction factor of the language adapter configuration."}
+    )
+    lang_adapter_omit_final_layer: bool = field(
+        default=False, metadata={'help': 'Omit the last language adapter layer.'}
     )

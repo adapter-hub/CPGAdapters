@@ -184,10 +184,15 @@ def main():
         # check if adapter already exists, otherwise add it
         if data_args.task not in model.config.adapters.adapter_list(AdapterType.text_task):
             # resolve the adapter config
+            if adapter_args.adapter_omit_final_layer:
+                leave_out = [model.config.num_hidden_layers - 1]
+            else:
+                leave_out = []
             adapter_config = AdapterConfig.load(
                 adapter_args.adapter_config,
                 non_linearity=adapter_args.adapter_non_linearity,
                 reduction_factor=adapter_args.adapter_reduction_factor,
+                leave_out=leave_out,
             )
             # load a pre-trained from Hub if specified
             if adapter_args.load_adapter:
@@ -200,10 +205,15 @@ def main():
         # optionally load a pre-trained language adapter
         if adapter_args.load_lang_adapter:
             # resolve the language adapter config
+            if adapter_args.lang_adapter_omit_final_layer:
+                leave_out = [model.config.num_hidden_layers - 1]
+            else:
+                leave_out = []
             lang_adapter_config = AdapterConfig.load(
                 adapter_args.lang_adapter_config,
                 non_linearity=adapter_args.lang_adapter_non_linearity,
                 reduction_factor=adapter_args.lang_adapter_reduction_factor,
+                leave_out=leave_out,
             )
             # load the language adapter from Hub
             lang_adapter_name = model.load_adapter(
