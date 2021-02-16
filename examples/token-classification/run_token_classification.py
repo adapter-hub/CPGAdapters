@@ -41,7 +41,7 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-from utils import TokenClassificationDataset, Split, get_labels
+from utils import MultiSourceTokenClassificationDataset, Split, get_labels
 
 
 logger = logging.getLogger(__name__)
@@ -79,8 +79,15 @@ class DataTrainingArguments:
     data_dir: str = field(
         metadata={"help": "The input data dir. Should contain the .txt files for a CoNLL-2003-formatted task."}
     )
+    languages_file: str = field(
+        metadata={'help': 'CSV file containing source languages and treebanks.'}
+    )
     task: str = field(
         metadata={"help": "'ner' or 'udpos'."}
+    )
+    max_examples: int = field(
+        default=None,
+        metadata={'help': 'Sets the maximum number of examples that may be used in training.'}
     )
     eval_split: Optional[str] = field(
         default=Split.dev,
@@ -239,33 +246,40 @@ def main():
 
     # Get datasets
     train_dataset = (
-        TokenClassificationDataset(
+        MultiSourceTokenClassificationDataset(
             task=data_args.task,
             data_dir=data_args.data_dir,
+            languages_file=data_args.languages_file,
+            batch_size=training_args.per_device_train_batch_size,
+            n_steps=training_args.max_steps,
             tokenizer=tokenizer,
             labels=labels,
             model_type=config.model_type,
             max_seq_length=data_args.max_seq_length,
             overwrite_cache=data_args.overwrite_cache,
             mode=Split.train,
+            max_examples=data_args.max_examples,
         )
         if training_args.do_train
         else None
     )
-    eval_dataset = (
-        TokenClassificationDataset(
-            task=data_args.task,
-            data_dir=data_args.data_dir,
-            tokenizer=tokenizer,
-            labels=labels,
-            model_type=config.model_type,
-            max_seq_length=data_args.max_seq_length,
-            overwrite_cache=data_args.overwrite_cache,
-            mode=data_args.eval_split,
-        )
-        if training_args.do_eval
-        else None
-    )
+    #eval_dataset = (
+    #    MultiSourceTokenClassificationDataset(
+    #        task=data_args.task,
+    #        data_dir=data_args.data_dir,
+    #        languages_file=data_args.languages_files,
+    #        batch_size=training_args.per_device_eval_batch_size,
+    #        n_steps=training_args.max_steps,
+    #        tokenizer=tokenizer,
+    #        labels=labels,
+    #        model_type=config.model_type,
+    #        max_seq_length=data_args.max_seq_length,
+    #        overwrite_cache=data_args.overwrite_cache,
+    #        mode=data_args.eval_split,
+    #    )
+    #    if training_args.do_eval
+    #    else None
+    #)
 
     def align_predictions(predictions: np.ndarray, label_ids: np.ndarray) -> Tuple[List[int], List[int]]:
         preds = np.argmax(predictions, axis=2)
@@ -292,15 +306,15 @@ def main():
             "f1": f1_score(out_label_list, preds_list),
         }
 
-    data_collator = language_aware_data_collator(adapter_args.language)
+    #data_collator = language_aware_data_collator(adapter_args.language)
 
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
+        #eval_dataset=eval_dataset,
+        #data_collator=data_collator,
         compute_metrics=compute_metrics,
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,
@@ -319,23 +333,23 @@ def main():
             tokenizer.save_pretrained(training_args.output_dir)
 
     # Evaluation
-    results = {}
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
+    #results = {}
+    #if training_args.do_eval:
+    #    logger.info("*** Evaluate ***")
 
-        result = trainer.evaluate()
+    #    result = trainer.evaluate()
 
-        output_eval_file = os.path.join(
-                training_args.output_dir,
-                "%s_eval_results.txt" % data_args.task)
-        if trainer.is_world_master():
-            with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
-                for key, value in result.items():
-                    logger.info("  %s = %s", key, value)
-                    writer.write("%s = %s\n" % (key, value))
+    #    output_eval_file = os.path.join(
+    #            training_args.output_dir,
+    #            "%s_eval_results.txt" % data_args.task)
+    #    if trainer.is_world_master():
+    #        with open(output_eval_file, "w") as writer:
+    #            logger.info("***** Eval results *****")
+    #            for key, value in result.items():
+    #                logger.info("  %s = %s", key, value)
+    #                writer.write("%s = %s\n" % (key, value))
 
-            results.update(result)
+    #        results.update(result)
 
     # Predict
     if training_args.do_predict:

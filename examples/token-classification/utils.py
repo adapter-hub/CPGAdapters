@@ -19,15 +19,23 @@
 import glob
 import logging
 import os
+import random
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Union
 
 from filelock import FileLock
 
+import numpy as np
+import pandas as pd
 import pyconll
-from transformers import PreTrainedTokenizer, is_tf_available, is_torch_available
 
+from transformers import (
+        is_tf_available,
+        is_torch_available,
+        language_aware_data_collator,
+        PreTrainedTokenizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +79,7 @@ class Split(Enum):
 if is_torch_available():
     import torch
     from torch import nn
-    from torch.utils.data.dataset import Dataset
+    from torch.utils.data.dataset import Dataset, IterableDataset
 
     class TokenClassificationDataset(Dataset):
         """
@@ -141,98 +149,123 @@ if is_torch_available():
             return self.features[i]
 
 
-if is_tf_available():
-    import tensorflow as tf
+class _MultiSourceTokenClassificationDatasetIterator:
 
-    class TFNerDataset:
-        """
-        This will be superseded by a framework-agnostic approach
-        soon.
-        """
+    def __init__(self, tc_datasets):
+        datasets = sorted(list(tc_datasets.datasets.items()))
+        self.generators = [dataset.generator() for _, dataset in datasets]
+        self.n_steps = tc_datasets.n_steps
+        self.step_count = 0 
 
-        features: List[InputFeatures]
-        pad_token_label_id: int = -1
-        # Use cross entropy ignore_index as padding label id so that only
-        # real label ids contribute to the loss later.
+    def __next__(self):
+        if self.step_count >= self.n_steps:
+            raise StopIteration()
 
-        def __init__(
+        dataset = np.random.choice(self.generators)
+        batch = next(dataset)
+        self.step_count += 1
+        return batch
+
+
+class SingleSourceTokenClassificationDataset(TokenClassificationDataset):
+
+    def __init__(
             self,
+            language: str,
+            batch_size: int,
+            task: str,
             data_dir: str,
             tokenizer: PreTrainedTokenizer,
             labels: List[str],
             model_type: str,
             max_seq_length: Optional[int] = None,
             overwrite_cache=False,
-            mode: Split = Split.train,
-        ):
-            examples = read_examples_from_file(data_dir, mode)
-            # TODO clean up all this to leverage built-in features of tokenizers
-            self.features = convert_examples_to_features(
-                examples,
-                labels,
-                max_seq_length,
-                tokenizer,
-                cls_token_at_end=bool(model_type in ["xlnet"]),
-                # xlnet has a cls token at the end
-                cls_token=tokenizer.cls_token,
-                cls_token_segment_id=2 if model_type in ["xlnet"] else 0,
-                sep_token=tokenizer.sep_token,
-                sep_token_extra=False,
-                # roberta uses an extra separator b/w pairs of sentences, cf. github.com/pytorch/fairseq/commit/1684e166e3da03f5b600dbb7855cb98ddfcd0805
-                pad_on_left=bool(tokenizer.padding_side == "left"),
-                pad_token=tokenizer.pad_token_id,
-                pad_token_segment_id=tokenizer.pad_token_type_id,
-                pad_token_label_id=self.pad_token_label_id,
+            mode: Union[Split, str] = Split.train,
+    ):
+        super().__init__(
+            task, data_dir, tokenizer, labels, model_type,
+            max_seq_length=max_seq_length,
+            overwrite_cache=overwrite_cache,
+            mode=mode,
+        )
+        logging.info('Initialised %s dataset with %d examples' % (language, len(self)))
+        self.language = language
+        self.batch_size = batch_size
+        self.data_collator = language_aware_data_collator(language)
+        self.n_examples = len(self)
+
+    def set_max_examples(self, n_examples):
+        assert n_examples <= len(self)
+        self.n_examples = n_examples
+
+    def generator(self):
+        indices = list(range(self.n_examples))
+        while True:
+            random.shuffle(indices)
+            for batch_begin in range(0, self.n_examples - self.batch_size, self.batch_size):
+                batch_end = batch_begin + self.batch_size
+                batch = [self.features[indices[i]]
+                         for i in range(batch_begin, batch_end)]
+                batch = self.data_collator(batch)
+                yield batch
+
+
+class MultiSourceTokenClassificationDataset(IterableDataset):
+
+    def __init__(
+        self,
+        task: str,
+        data_dir: str,
+        languages_file: str,
+        batch_size: int,
+        n_steps: int,
+        tokenizer: PreTrainedTokenizer,
+        labels: List[str],
+        model_type: str,
+        max_seq_length: Optional[int] = None,
+        overwrite_cache=False,
+        mode: Union[Split, str] = Split.train,
+        max_examples: int = None,
+    ):
+        language_df = pd.read_csv(languages_file, na_filter=False)
+        self.languages = []
+        self.datasets = {}
+        for i in range(language_df.shape[0]):
+            language = language_df['iso_code'][i]
+            self.languages.append(language)
+            path = os.path.join(data_dir, language_df['path'][i])
+            dataset = SingleSourceTokenClassificationDataset(
+                language=language,
+                batch_size=batch_size,
+                task=task,
+                data_dir=path,
+                tokenizer=tokenizer,
+                labels=labels,
+                model_type=model_type,
+                max_seq_length=max_seq_length,
+                overwrite_cache=overwrite_cache,
+                mode=mode
             )
+            self.datasets[language] = dataset
 
-            def gen():
-                for ex in self.features:
-                    if ex.token_type_ids is None:
-                        yield (
-                            {"input_ids": ex.input_ids, "attention_mask": ex.attention_mask},
-                            ex.label_ids,
-                        )
-                    else:
-                        yield (
-                            {
-                                "input_ids": ex.input_ids,
-                                "attention_mask": ex.attention_mask,
-                                "token_type_ids": ex.token_type_ids,
-                            },
-                            ex.label_ids,
-                        )
+        if max_examples:
+            n_examples = [(len(self.datasets[lang]), lang) for lang in self.languages]
+            n_examples.sort()
+            examples_left = max_examples
+            for i, (dataset_size, language) in enumerate(n_examples):
+                examples_per_language = examples_left // (len(n_examples) - i)
+                examples_for_this_language = min(dataset_size, examples_per_language)
+                logging.info(f'Dataset contains {examples_for_this_language} {language} examples')
+                self.datasets[language].set_max_examples(examples_for_this_language)
+                examples_left -= examples_for_this_language
 
-            if "token_type_ids" not in tokenizer.model_input_names:
-                self.dataset = tf.data.Dataset.from_generator(
-                    gen,
-                    ({"input_ids": tf.int32, "attention_mask": tf.int32}, tf.int64),
-                    (
-                        {"input_ids": tf.TensorShape([None]), "attention_mask": tf.TensorShape([None])},
-                        tf.TensorShape([None]),
-                    ),
-                )
-            else:
-                self.dataset = tf.data.Dataset.from_generator(
-                    gen,
-                    ({"input_ids": tf.int32, "attention_mask": tf.int32, "token_type_ids": tf.int32}, tf.int64),
-                    (
-                        {
-                            "input_ids": tf.TensorShape([None]),
-                            "attention_mask": tf.TensorShape([None]),
-                            "token_type_ids": tf.TensorShape([None]),
-                        },
-                        tf.TensorShape([None]),
-                    ),
-                )
+        self.n_steps = n_steps
 
-        def get_dataset(self):
-            return self.dataset
+    def __len__(self):
+        return self.n_steps
 
-        def __len__(self):
-            return len(self.features)
-
-        def __getitem__(self, i) -> InputFeatures:
-            return self.features[i]
+    def __iter__(self):
+        return _MultiSourceTokenClassificationDatasetIterator(self)
 
 
 def read_examples_from_file(task, data_dir, mode: Union[Split, str]) -> List[InputExample]:

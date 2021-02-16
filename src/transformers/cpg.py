@@ -30,12 +30,13 @@ class Property(nn.Module):
 
 class UrielMlpProperty(nn.Module):
 
-    def __init__(self, name, dim, languages, dropout=0.1):
+    def __init__(self, name, dim, languages, dropout=0.1, allow_unseen_languages=True):
         super().__init__()
         logging.info('Initialising URIEL embedding "%s" with dim %d and languages %s' % (
                 name, dim, ', '.join(languages)))
         self.name = name
         self.dim = dim
+        self.allow_unseen_languages = allow_unseen_languages
         self.features = l2v.get_features(
                 languages, 'syntax_knn+phonology_knn+inventory_knn')
         self.features = {
@@ -49,13 +50,32 @@ class UrielMlpProperty(nn.Module):
             else:
                 assert len(vec) == self.n_features
         self.layer_1 = nn.Linear(self.n_features, self.dim)
+        self.nearest_neighbours = {}
+
+    def _nearest_neighbour(self, language):
+        if language not in self.nearest_neighbours:
+            typology = torch.Tensor(l2v.get_features(
+                    language, 'syntax_knn+phonology_knn+inventory_knn')[language])
+            neighbour = None
+            distance = None
+            for l, v in self.features.items():
+                d = torch.sum(torch.abs(typology - v))
+                if neighbour is None or d < distance:
+                    neighbour = l
+                    distance = d
+            self.nearest_neighbours[language] = neighbour
+            logging.info(f'Using nearest neighbour language {neighbour} for {language}.')
+        return self.nearest_neighbours[language]
 
     def _get_features(self, language):
         if language not in self.features:
-            self.features[language] = torch.Tensor(l2v.get_features(
-                language, 'syntax_knn+phonology_knn+inventory_knn')[language])
+            if self.allow_unseen_languages:
+                typology = l2v.get_features(
+                        language, 'syntax_knn+phonology_knn+inventory_knn')[language]
+                self.features[language] = torch.Tensor(typology)
+            else:
+                language = self._nearest_neighbour(language)
         return self.features[language]
-
 
     def forward(self, language):
         features = self._get_features(language).to(self.layer_1.weight.device)

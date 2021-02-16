@@ -13,7 +13,7 @@ import torch
 from packaging import version
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
+from torch.utils.data.dataset import Dataset, IterableDataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler, Sampler, SequentialSampler
 from tqdm.auto import tqdm, trange
@@ -245,7 +245,9 @@ class Trainer:
         """
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
-        if isinstance(self.train_dataset, MultilingualDataset):
+        if isinstance(self.train_dataset, IterableDataset):
+                      #(MultilingualDataset,
+                      # MultiSourceTokenClassificationDataset)):
             train_sampler = None
             collate_fn = None
             batch_size = None
