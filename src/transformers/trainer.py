@@ -64,6 +64,7 @@ def is_tensorboard_available():
 if is_wandb_available():
     import wandb
 
+from transformers.data.processors.cpg import cpg_diversity
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class SequentialDistributedSampler(Sampler):
         self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
         self.total_size = self.num_samples * self.num_replicas
 
+
     def __iter__(self):
         indices = list(range(len(self.dataset)))
 
@@ -131,6 +133,79 @@ def get_tpu_sampler(dataset: Dataset):
     if xm.xrt_world_size() <= 1:
         return RandomSampler(dataset)
     return DistributedSampler(dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal())
+
+class LoopDataLoader(object):
+
+    def __init__(self, datasets, batch_size=1, shuffle=False, sampler=None,
+                 batch_sampler=None, num_workers=0, collate_fn=None,
+                 pin_memory=False, drop_last=False, timeout=0,
+                 worker_init_fn=None, multiprocessing_context=None
+                 ):
+
+        self.datasets = datasets
+        self.batch_size = batch_size
+        self.collate_fn = collate_fn
+        self.dataloaders = [DataLoader(
+                dataset ,
+                batch_size=batch_size,
+                sampler=RandomSampler(dataset),
+                collate_fn=collate_fn,
+                drop_last=True,
+            ) for dataset in datasets]
+        self.iterloaders = [iter(d) for d in self.dataloaders]
+        self.lengths = np.array([len(d) for d in self.dataloaders])
+        self.dataset_sizes = np.array([len(d.features) for d in  datasets])
+        self.diversity = np.array([cpg_diversity[d.task_name](d.task_name, len(d.features)) for d in datasets])
+        self.epochs = [0 for _ in self.dataloaders]
+
+        def H(labels, ds, full):
+            nr_ex = ds / labels
+            p = nr_ex / full
+            # h = np.sum([p * np.log2(p) for _ in range(labels)])
+            h = labels * p * np.log2(p)
+            return -h
+
+        h = [H(labels, ds, np.sum(self.dataset_sizes)) for labels, ds in zip(self.diversity, self.dataset_sizes)]
+        #
+        # H_max = np.log2(np.sum(self.diversity))
+        #
+        # T = 1
+        # n = (np.power(h, (1 / T))) / H_max
+
+        self.p = h/np.sum(h)
+
+        #
+        # self.p = self.lengths/np.sum(self.lengths)
+        # T = 10
+        # self.p = self.p ** (1/T)
+        # self.p = self.p / sum(self.p)
+
+        self.dataset = range(len(self))
+
+    def __len__(self):
+        return sum([int(len(d) * p) for d, p in zip(self.dataloaders, self.p)])
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        i = np.random.choice(range(len(self.dataloaders)), p = self.p)
+
+        try:
+            n = next(self.iterloaders[i])
+        except:
+            self.iterloaders[i] = iter(DataLoader(
+                self.datasets[i] ,
+                batch_size=self.batch_size,
+                sampler=RandomSampler(self.datasets[i]),
+                collate_fn=self.collate_fn,
+                drop_last=True,
+            ))
+
+            # self.dataloaders[i].sampler.set_epoch(self.epochs[i])
+            self.epochs[i] += 1
+            n = next(self.iterloaders[i])
+        return n
 
 
 class Trainer:
@@ -265,17 +340,35 @@ class Trainer:
             collate_fn = self.data_collator
             batch_size = self.args.train_batch_size
 
-        self.data_collator_class.train = True
+        if hasattr(self.data_collator, "train"):
+            self.data_collator_class.train = True
 
-        data_loader = DataLoader(
-            self.train_dataset,
-            batch_size=batch_size,
-            sampler=train_sampler,
-            collate_fn=collate_fn,
-            drop_last=self.args.dataloader_drop_last,
-        )
+        if not isinstance(self.train_dataset, list):
 
-        return data_loader
+            data_loader = DataLoader(
+                self.train_dataset,
+                batch_size=batch_size,
+                sampler=train_sampler,
+                collate_fn=collate_fn,
+                drop_last=self.args.dataloader_drop_last,
+            )
+
+            return data_loader
+        else:
+
+            data_loader = LoopDataLoader(
+                self.train_dataset,
+                batch_size=batch_size,
+                sampler=train_sampler,
+                collate_fn=collate_fn,
+                drop_last=self.args.dataloader_drop_last,
+
+            )
+
+            return data_loader
+
+
+
 
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
@@ -306,7 +399,8 @@ class Trainer:
             collate_fn = self.data_collator
             batch_size = self.args.eval_batch_size
 
-        self.data_collator_class.train = False
+        if hasattr(self.data_collator, "train"):
+            self.data_collator_class.train = False
 
         data_loader = DataLoader(
             eval_dataset,
@@ -342,7 +436,8 @@ class Trainer:
             collate_fn = self.data_collator
             batch_size = self.args.eval_batch_size
 
-        self.data_collator_class.train = False
+        if hasattr(self.data_collator, "train"):
+            self.data_collator_class.train = False
 
         data_loader = DataLoader(
             test_dataset,
@@ -893,7 +988,7 @@ class Trainer:
 
             with torch.no_grad():
                 outputs = model(**inputs)
-                if has_labels:
+                if has_labels and not isinstance(inputs['labels'], list):
                     step_eval_loss, logits = outputs[:2]
                     eval_losses += [step_eval_loss.mean().item()]
                 else:
@@ -907,10 +1002,16 @@ class Trainer:
                 else:
                     preds = torch.cat((preds, logits.detach()), dim=0)
                 if inputs.get("labels") is not None:
-                    if label_ids is None:
-                        label_ids = inputs["labels"].detach()
+                    if  isinstance(inputs['labels'], list):
+                        if label_ids is None:
+                            label_ids = inputs['labels']
+                        else:
+                            label_ids += inputs['labels']
                     else:
-                        label_ids = torch.cat((label_ids, inputs["labels"].detach()), dim=0)
+                        if label_ids is None:
+                            label_ids = inputs["labels"].detach()
+                        else:
+                            label_ids = torch.cat((label_ids, inputs["labels"].detach()), dim=0)
 
         if self.args.local_rank != -1:
             # In distributed mode, concatenate all results from all nodes:
@@ -928,7 +1029,7 @@ class Trainer:
         # Finally, turn the aggregated tensors into numpy arrays.
         if preds is not None:
             preds = preds.cpu().numpy()
-        if label_ids is not None:
+        if label_ids is not None and not isinstance(label_ids, list):
             label_ids = label_ids.cpu().numpy()
 
         if self.compute_metrics is not None and preds is not None and label_ids is not None:

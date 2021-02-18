@@ -19,6 +19,7 @@ class CpgConfig(Mapping):
     language_embedding_dim: int
     languages: Optional[List[str]] = None
     layer_embedding_dim: Optional[int] = None
+    down_dim: Optional[int] = None
     use_typology: Optional[bool] = False
 
     # we want to emulate a simple form of immutability while keeping the ability to add custom attributes.
@@ -170,9 +171,11 @@ class CpgAdapterConfig(AdapterConfig):
     share_across_layers: bool = False
     non_linearity: str = "gelu"
     reduction_factor: int = 16
-    context_dim: int = 768
+    language_embedding_dim: int = 768
+    down_dim: int = 100
     cpg: Optional[CpgConfig] = CpgConfig(
-        language_embedding_dim=context_dim,
+        language_embedding_dim=language_embedding_dim,
+        down_dim=down_dim
     )
 
 @dataclass

@@ -73,6 +73,8 @@ class InputFeatures:
     attention_mask: Optional[List[int]] = None
     token_type_ids: Optional[List[int]] = None
     label: Optional[Union[int, float]] = None
+    max_length: Optional[Union[int, float]] = None
+    max_label_length: Optional[Union[int, float]] = None
 
     def to_json_string(self):
         """Serializes this instance to a JSON string."""

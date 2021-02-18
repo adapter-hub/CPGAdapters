@@ -86,6 +86,7 @@ class CpgModuleConfig:
 
     def __init__(self, cpg_config, include_layer=True):
         self.context_dim = cpg_config['language_embedding_dim']
+        self.down_dim = cpg_config['down_dim']
         if cpg_config['layer_embedding_dim'] and include_layer:
             self.context_dim += cpg_config['layer_embedding_dim']
         # could have other attributes such as non-linearity to be applied after
@@ -101,7 +102,7 @@ class CpgModule(nn.Module):
     def add_param(self, name, shape):
         if self.config:
 
-            self.cpg_down = 10
+            self.cpg_down = self.config.down_dim
 
             self.down_dim = torch.nn.Linear(self.config.context_dim, self.cpg_down)
             self.dropout = torch.nn.Dropout(0.3)

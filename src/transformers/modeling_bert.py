@@ -870,7 +870,7 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
             max_length=max_length, max_label_length=max_label_length, label_embedder=label_embedder
         )
 
-        if max_label_length is not None:
+        if max_label_length is not None and self.config.hp_dict['add_label_noise'] and label_embedder is not None:
 
             nr_classes = (input_shape[-1] - max_length) / max_label_length
             label_ids = torch.tensor([[i+2] * max_label_length for i in range(int(nr_classes))]).cuda().view(1,-1)
@@ -880,13 +880,25 @@ class BertModel(BertModelAdaptersMixin, BertPreTrainedModel):
             # label_embs2 = self.embeddings.position_embeddings(label_ids2.view(-1))
             # label_embs = label_embedder(torch.cat((label_embs, label_embs2), -1))
             #
-            # embedding_output[:, max_length:, :] = self.embeddings.LayerNorm( label_embedder(
-            #     torch.cat((label_embs[None, :, :].repeat(input_shape[0], 1, 1), embedding_output[:, max_length:, :]),
-            #               -1),
-            #     embedding_output[:, max_length:, :]
-            # )[0])
 
-            embedding_output[:, max_length:, :] += label_embedder(label_embs)
+            if self.config.hp_dict['adapter_label_noise']:
+
+                if self.config.hp_dict['position_label_noise']:
+
+                    embedding_output[:, max_length:, :] = self.embeddings.LayerNorm( label_embedder(
+                        torch.cat((label_embs[None, :, :].repeat(input_shape[0], 1, 1), embedding_output[:, max_length:, :]),
+                                  -1),
+                        embedding_output[:, max_length:, :]
+                    )[0])
+                else:
+                    embedding_output[:, max_length:, :] = self.embeddings.LayerNorm( label_embedder(
+                             embedding_output[:, max_length:, :],
+                            embedding_output[:, max_length:, :]
+                        )[0])
+
+            else:
+
+                embedding_output[:, max_length:, :] += label_embedder(label_embs)
 
         # embedding_output[:, max_length:, :] = self.embeddings.LayerNorm(label_embedder(
         #     embedding_output[:, max_length:, :],

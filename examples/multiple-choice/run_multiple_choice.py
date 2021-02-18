@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 import numpy as np
-
+import random
 from transformers import (
     AdapterConfig,
     AdapterType,
@@ -36,8 +36,10 @@ from transformers import (
     TrainingArguments,
     set_seed,
 )
-from utils_multiple_choice import MultipleChoiceDataset, Split, processors
+# from utils_multiple_choice import MultipleChoiceDataset, Split, processors
+from transformers.data.datasets.cpg import CPGDataset, CPGDataTrainingArguments
 
+from transformers.data.processors.cpg import cpg_tasks_num_labels, cpg_processors as processors, cpg_output_modes, cpg_seq_lengths, cpg_processors
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,9 @@ class ModelArguments:
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
     cache_dir: Optional[str] = field(
+        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
+    )
+    score_file: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
 
@@ -91,7 +96,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, MultiLingAdapterArguments))
+    parser = HfArgumentParser((ModelArguments, CPGDataTrainingArguments, TrainingArguments, MultiLingAdapterArguments))
     model_args, data_args, training_args, adapter_args = parser.parse_args_into_dataclasses()
 
     if (
@@ -120,15 +125,54 @@ def main():
     )
     logger.info("Training/evaluation parameters %s", training_args)
 
-    # Set seed
-    set_seed(training_args.seed)
 
-    try:
-        processor = processors[data_args.task_name]()
-        label_list = processor.get_labels()
-        num_labels = len(label_list)
-    except KeyError:
-        raise ValueError("Task not found: %s" % (data_args.task_name))
+    batch_size = random.choice([16,32])
+
+    adapter = random.choice([True, False])
+
+    if adapter:
+        lr = random.choice([5e-5, 1e-4, 2e-4,5e-4])
+    else:
+        lr = random.choice([1e-5,2e-5,3e-5])
+
+    epochs = random.choice(list(range(1,11)))
+
+    seed = random.choice(list(range(9999)))
+
+    hp_dict = {
+
+        "dataset": data_args.task_name,
+        "seed": seed,
+        "batch_size": batch_size,
+        "lr": lr,
+        "epochs": epochs,
+        "adapter": adapter,
+    }
+    # Set seed
+    set_seed(seed)
+
+    training_args.per_device_train_batch_size = batch_size
+    training_args.learning_rate = lr
+    training_args.num_train_epochs = epochs
+
+    adapter_args.train_adapter = adapter
+
+    with open(model_args.score_file, 'a') as f:
+        f.write('\n')
+        for k,v in hp_dict.items():
+            f.write(str(v) + '\t')
+
+    # try:
+    #     processor = processors[data_args.task_name]()
+    #     label_list = processor.get_labels()
+    #     num_labels = len(label_list)
+    # except KeyError:
+    #     raise ValueError("Task not found: %s" % (data_args.task_name))
+
+    num_labels = cpg_tasks_num_labels[data_args.task_name]
+    processor = cpg_processors[data_args.task_name]
+
+    # output_mode = cpg_output_modes[task_name]
 
     # Load pretrained model and tokenizer
     #
@@ -198,41 +242,73 @@ def main():
             model.set_active_adapters([task_name])
 
     # Get datasets
-    train_dataset = (
-        MultipleChoiceDataset(
-            data_dir=data_args.data_dir,
-            tokenizer=tokenizer,
-            task=data_args.task_name,
-            max_seq_length=data_args.max_seq_length,
-            overwrite_cache=data_args.overwrite_cache,
-            mode=Split.train,
-        )
-        if training_args.do_train
-        else None
-    )
-    eval_dataset = (
-        MultipleChoiceDataset(
-            data_dir=data_args.data_dir,
-            tokenizer=tokenizer,
-            task=data_args.task_name,
-            max_seq_length=data_args.max_seq_length,
-            overwrite_cache=data_args.overwrite_cache,
-            mode=Split.dev,
-        )
+    train_dataset = ( CPGDataset(data_args,
+                   tokenizer=tokenizer,
+                   cache_dir=model_args.cache_dir,
+                   task_name=data_args.task_name,
+                   mc=True) if training_args.do_train else None)
+
+
+    eval_datasets = [(
+        CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t, mc=True)
         if training_args.do_eval
         else None
-    )
+    ) for t in cpg_tasks_num_labels.keys()]
 
-    def compute_metrics(p: EvalPrediction) -> Dict:
+    test_datasets = [
+        'copa',
+        "bzs_situation",
+        "bzs_emotion_fairytale_sentences",
+        "bzs_emotion_artificial_sentences",
+        "bzs_emotion_tweets",
+        "bzs_emotion_emotional_events",
+        "tweeteval_emotion",
+        "tweeteval_hate",
+        "tweeteval_irony",
+        "tweeteval_offensive",
+        "tweeteval_sentiment",
+        "tweeteval_stance_abortion",
+        "tweeteval_stance_atheism",
+        "tweeteval_stance_climate",
+        "tweeteval_stance_feminist",
+        "tweeteval_stance_hillary",
+    ]
+    # test_dataset = [(
+    eval_datasets += [(
+        CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir,
+                   task_name=test_task_name, mc=True)
+        if training_args.do_eval
+        else None) for test_task_name in test_datasets]
+
+    # def compute_metrics(p: EvalPrediction) -> Dict:
+    #     preds = np.argmax(p.predictions, axis=1)
+    #     return {"acc": simple_accuracy(preds, p.label_ids)}
+
+    # def build_compute_metrics_fn() -> Callable[[EvalPrediction], Dict]:
+    def compute_metrics(p: EvalPrediction):
         preds = np.argmax(p.predictions, axis=1)
+
+        def simple_accuracy(preds, labels):
+
+            if isinstance(labels[0], list):
+                correct_counter = 0.0
+                for pred, label in zip(preds, labels):
+                    if int(pred) in label:
+                        correct_counter += 1
+                return correct_counter / len(labels)
+
+            return (preds == labels).mean()
+
         return {"acc": simple_accuracy(preds, p.label_ids)}
+
+        # return compute_metrics_fn
 
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        # eval_dataset=eval_dataset,
         compute_metrics=compute_metrics,
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,
@@ -253,18 +329,20 @@ def main():
     results = {}
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
+        for eval_dataset in eval_datasets:
+            result = trainer.evaluate(eval_dataset=eval_dataset)
 
-        result = trainer.evaluate()
+            output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
+            if trainer.is_world_master():
+                with open(output_eval_file, "w") as writer:
+                    logger.info("***** Eval results *****")
+                    for key, value in result.items():
+                        logger.info("  %s = %s", key, value)
+                        writer.write("%s = %s\n" % (key, value))
 
-        output_eval_file = os.path.join(training_args.output_dir, "eval_results.txt")
-        if trainer.is_world_master():
-            with open(output_eval_file, "w") as writer:
-                logger.info("***** Eval results *****")
-                for key, value in result.items():
-                    logger.info("  %s = %s", key, value)
-                    writer.write("%s = %s\n" % (key, value))
-
-                results.update(result)
+                    results.update(result)
+            with open(model_args.score_file, 'a') as f:
+                f.write(str(result['eval_acc']) + '\t')
 
     return results
 

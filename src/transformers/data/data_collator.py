@@ -52,10 +52,13 @@ class CPGCollator:
         # Special handling for labels.
         # Ensure that tensor is created with the correct type
         # (it should be automatically the case, but let's make sure of it.)
-        if "label" in first and first["label"] is not None:
-            label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
-            dtype = torch.long if isinstance(label, int) else torch.float
-            batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
+        if "label" in first and first["label"] is not None :
+            if not isinstance(first["label"], list):
+                label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
+                dtype = torch.long if isinstance(label, int) else torch.float
+                batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
+            else:
+                batch["labels"] = [f["label"] for f in features]
         elif "label_ids" in first and first["label_ids"] is not None:
             if isinstance(first["label_ids"], torch.Tensor):
                 batch["labels"] = torch.stack([f["label_ids"] for f in features])
@@ -94,6 +97,8 @@ class CPGCollator:
                     batch[k] = torch.tensor([f[k] for f in features], dtype=torch.long)
 
         # batch["language"] = language
+        batch['max_length'] = first['max_length']
+        batch['max_label_length'] = first['max_label_length']
 
         return batch
 
@@ -125,9 +130,12 @@ def default_data_collator(features: List[InputDataClass], language=None) -> Dict
     # Ensure that tensor is created with the correct type
     # (it should be automatically the case, but let's make sure of it.)
     if "label" in first and first["label"] is not None:
-        label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
-        dtype = torch.long if isinstance(label, int) else torch.float
-        batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
+        if not isinstance(first["label"], list):
+            label = first["label"].item() if isinstance(first["label"], torch.Tensor) else first["label"]
+            dtype = torch.long if isinstance(label, int) else torch.float
+            batch["labels"] = torch.tensor([f["label"] for f in features], dtype=dtype)
+        else:
+            batch["labels"] = [f["label"] for f in features]
     elif "label_ids" in first and first["label_ids"] is not None:
         if isinstance(first["label_ids"], torch.Tensor):
             batch["labels"] = torch.stack([f["label_ids"] for f in features])

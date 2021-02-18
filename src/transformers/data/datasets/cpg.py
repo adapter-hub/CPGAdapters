@@ -13,7 +13,7 @@ from ...tokenization_bart import BartTokenizer, BartTokenizerFast
 from ...tokenization_roberta import RobertaTokenizer, RobertaTokenizerFast
 from ...tokenization_utils import PreTrainedTokenizer
 from ...tokenization_xlm_roberta import XLMRobertaTokenizer
-from ..processors.cpg import cpg_convert_examples_to_features, cpg_output_modes, cpg_processors
+from ..processors.cpg import cpg_convert_examples_to_features, cpg_output_modes, cpg_processors, cpg_seq_lengths, mc_convert_examples_to_features
 from ..processors.utils import InputFeatures
 from datasets import load_dataset
 
@@ -76,9 +76,11 @@ class CPGDataset(Dataset):
         limit_length: Optional[int] = None,
         mode: Union[str, Split] = Split.train,
         cache_dir: Optional[str] = None,
-        task_name = None
+        task_name = None,
+        mc = False
     ):
         self.args = args
+        self.task_name = task_name
         self.processor = cpg_processors[task_name]()
         self.output_mode = cpg_output_modes[task_name]
         if isinstance(mode, str):
@@ -87,12 +89,29 @@ class CPGDataset(Dataset):
             except KeyError:
                 raise KeyError("mode is not a valid split name")
         # Load data features from cache or dataset file
-        cached_features_file = os.path.join(
-            cache_dir if cache_dir is not None else args.data_dir,
-            "cached_{}_{}_{}_{}".format(
-                mode.value, tokenizer.__class__.__name__, str(args.max_seq_length), task_name,
-            ),
-        )
+
+        if task_name in cpg_seq_lengths and mode.value in cpg_seq_lengths[task_name]:
+            max_seq_length = cpg_seq_lengths[task_name][mode.value][0]
+            max_label_length = cpg_seq_lengths[task_name][mode.value][1]
+        else:
+            max_seq_length = args.max_seq_length
+            max_label_length = args.max_label_length
+
+        group_max_seq_length = max_seq_length + max_label_length
+        if not mc:
+            cached_features_file = os.path.join(
+                cache_dir if cache_dir is not None else args.data_dir,
+                "cached_{}_{}_{}_{}".format(
+                    mode.value, tokenizer.__class__.__name__, str(group_max_seq_length), task_name,
+                ),
+            )
+        else:
+            cached_features_file = os.path.join(
+                cache_dir if cache_dir is not None else args.data_dir,
+                "cached_mcqa2_{}_{}_{}_{}".format(
+                    mode.value, tokenizer.__class__.__name__, str(group_max_seq_length), task_name,
+                ),
+            )
         self.label_list = self.processor.get_labels(task_name)
 
         # Make sure only the first process in distributed training processes the dataset,
@@ -117,14 +136,25 @@ class CPGDataset(Dataset):
                     examples = self.processor.get_train_examples(task_name)
                 if limit_length is not None:
                     examples = examples[:limit_length]
-                self.features = cpg_convert_examples_to_features(
-                    examples,
-                    tokenizer,
-                    max_length=args.max_seq_length,
-                    label_list=self.label_list,
-                    output_mode=self.output_mode,
-                    max_label_length=args.max_label_length,
-                )
+                if not mc :
+                    self.features = cpg_convert_examples_to_features(
+                        examples,
+                        tokenizer,
+                        max_length=max_seq_length,
+                        label_list=self.label_list,
+                        output_mode=self.output_mode,
+                        max_label_length=max_label_length,
+                    )
+                else:
+                    self.features = mc_convert_examples_to_features(
+                        examples,
+                        tokenizer,
+                        max_length=max_seq_length,
+                        label_list=self.label_list,
+                        output_mode=self.output_mode,
+                        max_label_length=max_label_length,
+                    )
+
                 start = time.time()
                 torch.save(self.features, cached_features_file)
                 # ^ This seems to take a lot of time so I want to investigate why and how we can improve.

@@ -39,7 +39,7 @@ from transformers import (
 
 import random
 from transformers.data.datasets.cpg import CPGDataset, CPGDataTrainingArguments as DataTrainingArguments
-from transformers.data.processors.cpg import cpg_tasks_num_labels, cpg_processors, cpg_output_modes
+from transformers.data.processors.cpg import cpg_tasks_num_labels, cpg_processors, cpg_output_modes, cpg_seq_lengths
 
 from transformers.adapter_config import  CpgAdapterConfig
 
@@ -79,7 +79,9 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
-
+    score_file: Optional[str] = field(
+        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
+    )
 
 
 def main():
@@ -125,36 +127,51 @@ def main():
     )
     logger.info("Training/evaluation parameters %s", training_args)
 
-    # Set seed
-    set_seed(training_args.seed)
 
-    dataset = random.choice(['commonsense_qa', 'social_i_qa'])
+    seed = random.choice(list(range(9999)))
+    # Set seed
+    set_seed(seed)
+
+    # dataset = random.choice(['commonsense_qa', 'social_i_qa'])
+    dataset = 'social_i_qa'
     batch_size = random.choice([16, 32, 64])
-    lr = random.choice([1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4])
-    epochs = random.choice([5, 10, 15, 20, 25, 30])
-    only_head = random.choices(population=[True, False], weights=[0.05, 0.95])
+    batch_size = 8
+    # lr = random.choice([1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4])
+    epochs = random.choice([2,3,4,6,7,8,9,5, 10, 15, 20])
+    epochs = 3
+    # only_head = random.choices(population=[True, False], weights=[0.10, 0.90])[0]
+    only_head = False
     if not only_head:
+        lr = random.choice([5e-5, 1e-4, 2e-4, 5e-4])
+        lr =  2e-4
         label_adapter = random.choice([True, False])
         add_label_noise = random.choice([True, False])
 
         if add_label_noise:
 
-            adapter_label_noise = random.choice([True, False])
-            position_label_noise = random.choice([True, False])
+            # adapter_label_noise = random.choice([True, False])
+            adapter_label_noise = False
+            if adapter_label_noise:
+                position_label_noise = random.choice([True, False])
+            else:
+                position_label_noise = True
         else:
             adapter_label_noise = False
             position_label_noise = False
 
-        pass_label_into_classifier = random.choice([True, False])
+        # pass_label_into_classifier = random.choice([True, False])
+        pass_label_into_classifier = False
 
         if pass_label_into_classifier and add_label_noise:
             reuse_label_noise = random.choice([True, False])
         else:
             reuse_label_noise = False
 
-        adapter_layer_context = random.choice([True, False])
+        # adapter_layer_context = random.choice([False, True])
+        adapter_layer_context = True
 
     else:
+        lr = random.choice([1e-5, 2e-5, 5e-5, 1e-4])
         label_adapter = False
         add_label_noise = False
         adapter_label_noise = False
@@ -163,14 +180,17 @@ def main():
         reuse_label_noise = False
         adapter_layer_context = False
 
-    cpg_head_positions = random.choice([True, False])
+    # cpg_head_positions = random.choice([True, False])
+    cpg_head_positions = True
     cpg_down_dim = random.choice([10, 50, 100, 300])
+    cpg_down_dim = 10
     sample_nota = random.choice([True, False])
     if sample_nota:
         nota_prob = random.choice([0.5, 0.25, 0.1, 0.05])
     else:
         nota_prob = 0.0
 
+    training_args.max_steps = 12000
     hp_dict = {
 
         "dataset": dataset,
@@ -189,12 +209,40 @@ def main():
         "cpg_down_dim": cpg_down_dim,
         "sample_nota": sample_nota,
         "nota_prob": nota_prob,
+        "seed": seed,
     }
 
+    # hp_dict = {
+    #
+    #     "dataset": 'social_i_qa',
+    #     "batch_size": 8,
+    #     "lr": lr,
+    #     "epochs": epochs,
+    #     "only_head": False,
+    #     "label_adapter": True,
+    #     "add_label_noise": False,
+    #     "adapter_label_noise": False,
+    #     "position_label_noise": False,
+    #     "pass_label_into_classifier": False,
+    #     "reuse_label_noise": False,
+    #     "adapter_layer_context": False,
+    #     "cpg_head_positions": True,
+    #     "cpg_down_dim": 10,
+    #     "sample_nota": True,
+    #     "nota_prob": 0.1,
+    #     "seed": seed,
+    # }
 
 
+    with open(model_args.score_file, 'a') as f:
+        f.write('\n')
+        for k,v in hp_dict.items():
+            f.write(str(v) + '\t')
 
-
+    training_args.per_device_train_batch_size = hp_dict['batch_size']
+    training_args.learning_rate = hp_dict['lr']
+    training_args.num_train_epochs = hp_dict['epochs']
+    data_args.task_name = hp_dict['dataset']
 
 
 
@@ -264,9 +312,10 @@ def main():
                 if hp_dict["label_adapter"]:
                     model.add_adapter('labels', AdapterType.text_task, config=cpg_adapter_config)
             if hp_dict["adapter_layer_context"]:
-                adapter_config = CpgAdapterConfig(context_dim=768 * 2)
+                adapter_config = CpgAdapterConfig(**{"cpg": {"language_embedding_dim":768 *2, "down_dim":hp_dict["cpg_down_dim"], "languages":None, "layer_embedding_dim": None, "use_typoligy": False}})
             else:
-                adapter_config = CpgAdapterConfig(context_dim=768)
+                adapter_config = CpgAdapterConfig(**{"cpg": {"language_embedding_dim":768, "down_dim":hp_dict["cpg_down_dim"], "languages":None, "layer_embedding_dim": None, "use_typoligy": False}})
+
             # load a pre-trained from Hub if specified
             if adapter_args.load_adapter:
                 model.load_adapter(
@@ -306,25 +355,61 @@ def main():
             model.set_active_adapters([task_name])
 
     # Get datasets
-    train_dataset = (
-        CPGDataset(data_args, tokenizer=tokenizer, cache_dir=model_args.cache_dir, task_name=task_name) if training_args.do_train else None
-    )
-    eval_dataset = (
-        CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=task_name)
+    train_dataset = [(
+        CPGDataset(data_args,
+                   tokenizer=tokenizer,
+                   cache_dir=model_args.cache_dir,
+                   task_name=task_name_) if training_args.do_train else None
+    # ) for task_name_ in ['mnli']]
+    ) for task_name_ in ['clinic', 'banking', 'hwu', 'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
+                         'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms', 'piqa','commonsense_qa', 'social_i_qa']]
+    eval_datasets = [(
+        CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t)
         if training_args.do_eval
         else None
-    )
-    test_dataset = (
-        CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir, task_name=task_name)
-        if training_args.do_predict
-        else None
-    )
+    ) for t in cpg_tasks_num_labels.keys()]
+
+    test_datasets = [
+        'clinic', 'banking', 'hwu',
+        'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
+                         'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms',
+        'race',
+        'copa',
+        "bzs_situation",
+        "bzs_emotion_fairytale_sentences",
+        "bzs_emotion_artificial_sentences",
+                     "bzs_emotion_tweets",
+                     "bzs_emotion_emotional_events",
+    "tweeteval_emotion",
+    "tweeteval_hate",
+    "tweeteval_irony",
+    "tweeteval_offensive",
+    "tweeteval_sentiment",
+    "tweeteval_stance_abortion",
+    "tweeteval_stance_atheism",
+    "tweeteval_stance_climate",
+    "tweeteval_stance_feminist",
+    "tweeteval_stance_hillary",
+    ]
+    test_dataset = [(
+    # eval_datasets += [ (
+        CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir, task_name=test_task_name)
+        if training_args.do_eval
+        else None ) for test_task_name in test_datasets]
 
     def build_compute_metrics_fn() -> Callable[[EvalPrediction], Dict]:
         def compute_metrics_fn(p: EvalPrediction):
             preds = np.argmax(p.predictions, axis=1)
 
             def simple_accuracy(preds, labels):
+
+                if isinstance(labels[0], list):
+                    correct_counter = 0.0
+                    for pred, label in zip(preds, labels):
+                        if int(pred) in label:
+                            correct_counter += 1
+                    return correct_counter / len(labels)
+
                 return (preds == labels).mean()
 
             return {"acc": simple_accuracy(preds, p.label_ids)}
@@ -334,14 +419,14 @@ def main():
 
     noneoftheabove= tokenizer(
             [tokenizer.sep_token + "None of the above" + tokenizer.sep_token],
-            max_length=data_args.max_label_length,
+            max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
             padding="max_length",
             truncation=True,
             add_special_tokens=False
         )
 
-    dc = CPGCollator(max_label_length=data_args.max_label_length,
-                        max_length=data_args.max_seq_length,
+    dc = CPGCollator(max_label_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
+                        max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][0],
                      noneoftheabove=noneoftheabove,
                      hp_dict=hp_dict
                      )
@@ -351,7 +436,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        # eval_dataset=eval_dataset,
         compute_metrics=build_compute_metrics_fn(),
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,
@@ -367,11 +452,11 @@ def main():
         trainer.train(
             model_path=model_args.model_name_or_path if os.path.isdir(model_args.model_name_or_path) else None
         )
-        trainer.save_model()
-        # For convenience, we also re-save the tokenizer to the same directory,
-        # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
-            tokenizer.save_pretrained(training_args.output_dir)
+        # trainer.save_model()
+        # # For convenience, we also re-save the tokenizer to the same directory,
+        # # so that you can share your model easily on huggingface.co/models =)
+        # if trainer.is_world_master():
+        #     tokenizer.save_pretrained(training_args.output_dir)
 
     # Evaluation
     eval_results = {}
@@ -379,10 +464,10 @@ def main():
         logger.info("*** Evaluate ***")
 
         # Loop to handle MNLI double evaluation (matched, mis-matched)
-        eval_datasets = [eval_dataset]
+        # eval_datasets = [eval_dataset]
 
         for eval_dataset in eval_datasets:
-            trainer.compute_metrics = build_compute_metrics_fn(eval_dataset.args.task_name)
+            trainer.compute_metrics = build_compute_metrics_fn()
             eval_result = trainer.evaluate(eval_dataset=eval_dataset)
 
             output_eval_file = os.path.join(
@@ -396,6 +481,9 @@ def main():
                         writer.write("%s = %s\n" % (key, value))
 
             eval_results.update(eval_result)
+
+            with open(model_args.score_file, 'a') as f:
+                f.write(str(eval_result['eval_acc']) + '\t')
 
     if training_args.do_predict:
         logging.info("*** Test ***")

@@ -197,18 +197,25 @@ class RobertaModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
         output_hidden_states=None,
         adapter_names=None,
         head=None,
+            max_length=None,
+            max_label_length=None
     ):
         input_ids = input_ids.view(-1, input_ids.size(-1)) if input_ids is not None else None
         attention_mask = attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
         token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
         position_ids = position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
-        
+
         if not self.config.hp_dict['only_head']:
 
             if self.config.hp_dict['label_adapter']:
                 cpg_adapter_name = 'cpg|labels'
             else:
                 cpg_adapter_name = 'cpg|cpg'
+
+            if self.config.hp_dict['add_label_noise']:
+                label_embedder = self.heads[list(self.heads)[0]][0].label_embedder
+            else:
+                label_embedder = None
 
             cpg_outputs = self.roberta(
                 input_ids,
@@ -220,25 +227,28 @@ class RobertaModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 adapter_names=[cpg_adapter_name],
-                max_length=self.heads[list(self.heads)[0]][0].max_length,
-                max_label_length=self.heads[list(self.heads)[0]][0].max_label_length,
-                label_embedder=self.heads[list(self.heads)[0]][0].label_embedder,
+                max_length=max_length,
+                max_label_length=max_label_length,
+                label_embedder=label_embedder,
                 split_pos=self.heads[list(self.heads)[0]][0].max_length
             )
-
+            # nr_labels = int((attention_mask.shape[-1] - max_length)/ max_label_length)
             # attention_mask_ = attention_mask.clone()
-            attention_mask_ = torch.tensor(torch.sum(torch.stack([torch.tensor((input_ids == val), dtype=torch.long) for val in range(5)]), 0) == 0, dtype=torch.long).cuda()
+            attention_mask_ = torch.tensor(torch.sum(torch.stack([torch.tensor((input_ids == val), dtype=torch.long) for val in  [0, 1, 2, 3, 50264]]), 0) == 0, dtype=torch.long).cuda()
 
-            if not self.config.hp_dict['pass_label_into_classifer']:
+            if not self.config.hp_dict['pass_label_into_classifier']:
                 attention_mask = attention_mask[:,:self.heads[self.active_adapters[0][0]]._modules['0'].max_length]
                 input_ids = input_ids[:,:self.heads[self.active_adapters[0][0]]._modules['0'].max_length]
-                max_length=None
-                max_label_length = None
+                max_length_=None
+                max_label_length_ = None
                 label_embedder = None
             else:
-                max_length = self.heads[list(self.heads)[0]][0].max_length,
-                max_label_length=self.heads[list(self.heads)[0]][0].max_label_length
-                label_embedder=self.heads[list(self.heads)[0]][0].label_embedder
+                max_length_ = max_length
+                max_label_length_=max_label_length
+                if  self.config.hp_dict['reuse_label_noise'] and self.config.hp_dict['add_label_noise']:
+                    label_embedder=self.heads[list(self.heads)[0]][0].label_embedder
+                else:
+                    label_embedder =None
 
 
             outputs = self.roberta(
@@ -252,13 +262,40 @@ class RobertaModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 adapter_names=adapter_names,
                 context_embedding= cpg_outputs[1],
-                max_length=max_length,
-                max_label_length=max_label_length,
+                max_length=max_length_,
+                max_label_length=max_label_length_,
                 label_embedder=label_embedder
             )
 
-        outputs = self.forward_head(outputs, head_name=head, attention_mask=attention_mask, labels=labels, contextual_inputs=cpg_outputs[0], attention_mask_=attention_mask_)
-
+            outputs = self.forward_head(outputs,
+                                        head_name=head,
+                                        attention_mask=attention_mask,
+                                        labels=labels,
+                                        contextual_inputs=cpg_outputs[0],
+                                        attention_mask_=attention_mask_,
+                                        max_label_length=max_label_length,
+                                        max_length=max_length
+                                        )
+        else:
+            outputs = self.roberta(
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                adapter_names=adapter_names,
+            )
+            # nr_labels = int((attention_mask.shape[-1] - max_length) / max_label_length)
+            attention_mask_ = torch.tensor(
+                torch.sum(torch.stack([torch.tensor((input_ids == val), dtype=torch.long) for val in [0, 1, 2, 3, 50264]]),
+                          0) == 0, dtype=torch.long).cuda()
+            outputs = self.forward_head(outputs, head_name=head, attention_mask=attention_mask, labels=labels,
+                                        contextual_inputs=outputs[0], attention_mask_=attention_mask_,
+                                        max_label_length=max_label_length,
+                                        max_length=max_length)
         return outputs
 
 
@@ -508,6 +545,8 @@ class RobertaForMultipleChoice(ModelWithHeadsAdaptersMixin, BertPreTrainedModel)
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        max_length=None,
+        max_label_length=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
@@ -566,9 +605,13 @@ class RobertaForMultipleChoice(ModelWithHeadsAdaptersMixin, BertPreTrainedModel)
 
         outputs = (reshaped_logits,) + outputs[2:]  # add hidden states and attention if they are here
 
-        if labels is not None:
+        if labels is not None and not isinstance(labels[0], list):
+            # if labels is not None:
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(reshaped_logits, labels)
+            try:
+                loss = loss_fct(reshaped_logits, labels)
+            except:
+                loss = loss_fct(reshaped_logits,  torch.tensor(labels, dtype=torch.long).view(-1).cuda())
             outputs = (loss,) + outputs
 
         return outputs  # (loss), reshaped_logits, (hidden_states), (attentions)

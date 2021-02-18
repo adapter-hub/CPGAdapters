@@ -42,20 +42,34 @@ def get_fusion_regularization_loss(model):
 
 class Head(CpgModule):
 
-    def __init__(self, in_features, bias=True, config=None, max_length=None, max_label_length=None,layers=2, activation_function=None, hidden_dropout_prob=0.0):
+    def __init__(self, in_features, bias=True, model_config=None, max_length=None, max_label_length=None,layers=2, activation_function=None, hidden_dropout_prob=0.0):
         class c:
-            context_dim = in_features * 2
+            if model_config.hp_dict['cpg_head_positions']:
+                context_dim = in_features * 2
+            else:
+                context_dim = in_features
+
+            down_dim = model_config.hp_dict['cpg_down_dim']
+
         config = c()
         super().__init__(config)
         self.in_features = in_features
         self.max_length = max_length
         self.max_label_length = max_label_length
         self.dropout = torch.nn.Dropout(0.3)
-        self.label_embedder = nn.Linear(self.in_features , self.in_features)
-        # self.label_embedder = Adapter(non_linearity="gelu",
-        #                               input_size=self.in_features*2,
-        #                               output_size=self.in_features,
-        #                               down_sample=48,)
+        self.model_config = model_config
+        if self.model_config.hp_dict['add_label_noise']:
+            if model_config.hp_dict['adapter_label_noise']:
+                if model_config.hp_dict['position_label_noise']:
+                    in_feat_noise = self.in_features*2
+                else:
+                    in_feat_noise = self.in_features
+                self.label_embedder = Adapter(non_linearity="gelu",
+                                              input_size=in_feat_noise,
+                                              output_size=self.in_features,
+                                              down_sample=48,)
+            else:
+                self.label_embedder = nn.Linear(self.in_features , self.in_features)
 
 
         def gelu_new(x):
@@ -123,8 +137,8 @@ class Head(CpgModule):
         for i in range(max_length, input_length, max_label_length):
             c = torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:, i + 1:i + max_label_length - 1][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1) / torch.sum(attention_mask[:, i + 1:i + max_label_length - 1], -1)[:,None].repeat(1,contextual_inputs.shape[-1])
             # c = torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:, i + 1:i + max_label_length - 1][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1)
-
-            c = torch.cat((c,pred_input), 1)
+            if self.model_config.hp_dict['cpg_head_positions']:
+                c = torch.cat((c,contextual_inputs[:,0,:]), 1)
 
             if weight is None:
                 # torch.sum(contextual_inputs[:, i + 1:i + max_label_length - 1, :] * attention_mask[:,
@@ -146,9 +160,11 @@ class Head(CpgModule):
                 bias = torch.cat((bias, self.eval_param('bias', context_embedding=c)), 1)
                 # bias = torch.cat((bias, self.eval_param('bias', context_embedding=contextual_inputs[:,i+1,:])), 1)
                 # bias = torch.cat((bias, self.eval_param('bias', context_embedding=contextual_inputs[:,i,:])), 1)
-
-        c = torch.sum(contextual_inputs[:, max_length:, :] * attention_mask[:,max_length:][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1) / torch.sum(attention_mask[:, max_length:], -1)[:,None].repeat(1,contextual_inputs.shape[-1])
-        c = torch.cat((c, pred_input), 1)
+        if self.model_config.hp_dict['cpg_head_positions']:
+            c = torch.sum(contextual_inputs[:, max_length:, :] * attention_mask[:,max_length:][:, :, None].repeat(1, 1, contextual_inputs.shape[-1]), 1) / torch.sum(attention_mask[:, max_length:], -1)[:,None].repeat(1,contextual_inputs.shape[-1])
+            c = torch.cat((c, contextual_inputs[:,0,:]), 1)
+        else:
+            c = contextual_inputs[:,0,:]
         # output = self.pred_linear[0](pred_input)
         # output = self.pred_linear[1](output,c)
         # output = self.pred_linear[2](output)
@@ -520,7 +536,7 @@ class BertOutputAdaptersMixin:
 
 
             if adapter_layer is not None:
-                if context_embedding is not None:
+                if hasattr(self.config, "hp_dict") and self.config.hp_dict['adapter_layer_context'] and context_embedding is not None:
                     context_embedding = torch.cat((context_embedding, self.previous_context_embedding), -1)
 
                 hidden_states, _, _ = adapter_layer(
@@ -967,7 +983,7 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
         else:
             pred_head.append(Head(self.config.hidden_size,
                                      bias=bias,
-                                     config=None,
+                                     model_config=self.config,
                                      max_length=max_length,
                                      max_label_length=max_label_length,
                                      layers=head_config["layers"],
@@ -980,7 +996,15 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
         self.heads[head_name].apply(self._init_weights)
         self.heads[head_name].train(self.training)  # make sure training mode is consistent
 
-    def forward_head(self, outputs, head_name=None, attention_mask=None, labels=None, contextual_inputs=None, attention_mask_=None):
+    def forward_head(self, outputs,
+                     head_name=None,
+                     attention_mask=None,
+                     labels=None,
+                     contextual_inputs=None,
+                     attention_mask_=None,
+                     max_label_length=None,
+                     max_length=None
+                     ):
         head_name = head_name or self.active_head
         if not head_name:
             logger.debug("No prediction head is used.")
@@ -1008,10 +1032,14 @@ class BertModelHeadsMixin(ModelWithHeadsAdaptersMixin):
                 outputs = (loss,) + outputs
 
         elif head["head_type"] == "cpg":
-            logits = self.heads[head_name][0](pred_input=sequence_output[:, 0], contextual_inputs=contextual_inputs, attention_mask=attention_mask_)
+            logits = self.heads[head_name][0](pred_input=sequence_output[:, 0],
+                                              contextual_inputs=contextual_inputs,
+                                              attention_mask=attention_mask_,
+                                              max_label_length=max_label_length,
+                                              max_length=max_length)
 
             outputs = (logits,) + outputs[2:]
-            if labels is not None:
+            if labels is not None and not isinstance(labels[0], list):
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits, labels.view(-1))
                 outputs = (loss,) + outputs
