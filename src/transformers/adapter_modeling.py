@@ -79,9 +79,9 @@ class Adapter(nn.Module):
             self.down_sample = self.input_size // 2
 
         # Linear down projection of the input
-        down_projection = cpg.Linear(
+        self.down_projection = cpg.Linear(
                 self.input_size, self.down_sample, config=self.cpg_config)
-        seq_list.append(down_projection)
+        seq_list.append(self.down_projection)
 
         # select non-linearity
         # TODO give more options than just relu, or pass the non_linearity directly, not as a string
@@ -108,6 +108,10 @@ class Adapter(nn.Module):
         if init_bert_weights:
             self.adapter_down.apply(self.init_bert_weights)
             self.adapter_up.apply(self.init_bert_weights)
+
+    def decontextualise(self, context_embedding):
+        self.down_projection.decontextualise(context_embedding)
+        self.adapter_up.decontextualise(context_embedding)
 
     def forward(self, x, residual_input, context_embedding=None):  # , residual_input=None):
         down = self.adapter_down(x, context_embedding=context_embedding)

@@ -333,7 +333,7 @@ def main():
             tokenizer.save_pretrained(training_args.output_dir)
 
     # Evaluation
-    #results = {}
+    results = {}
     #if training_args.do_eval:
     #    logger.info("*** Evaluate ***")
 

@@ -7,6 +7,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .activations import get_activation
+
 
 class Property(nn.Module):
 
@@ -30,7 +32,8 @@ class Property(nn.Module):
 
 class UrielMlpProperty(nn.Module):
 
-    def __init__(self, name, dim, languages, dropout=0.1, allow_unseen_languages=True):
+    def __init__(self, name, dim, languages,
+                 activation=None, allow_unseen_languages=True):
         super().__init__()
         logging.info('Initialising URIEL embedding "%s" with dim %d and languages %s' % (
                 name, dim, ', '.join(languages)))
@@ -51,6 +54,10 @@ class UrielMlpProperty(nn.Module):
                 assert len(vec) == self.n_features
         self.layer_1 = nn.Linear(self.n_features, self.dim)
         self.nearest_neighbours = {}
+        if activation:
+            self.activation_fn = get_activation(activation)
+        else:
+            self.activation_fn = lambda x: x
 
     def _nearest_neighbour(self, language):
         if language not in self.nearest_neighbours:
@@ -80,6 +87,7 @@ class UrielMlpProperty(nn.Module):
     def forward(self, language):
         features = self._get_features(language).to(self.layer_1.weight.device)
         embedding = self.layer_1(features)
+        embedding = self.activation_fn(embedding)
         return embedding
 
 
@@ -87,7 +95,7 @@ class Environment(nn.Module):
 
     def __init__(self, properties):
         super().__init__()
-        self.properties = properties
+        self.properties = sorted(properties, key=lambda x: x.name)
         self.dim = 0
         for p in properties:
             self.dim += p.dim
@@ -146,6 +154,13 @@ class CpgModule(nn.Module):
         std = 1.0 / self.config.context_dim
         for param in self.parameters():
             nn.init.normal_(param, std=std)
+
+    def decontextualise(self, context_embedding):
+        if self.config is None:
+            raise ValueError('Module is already decontextualised')
+        for param, value in self.named_parameters():
+            value.data = self.eval_param(param, context_embedding)
+        self.config = None
 
 
 class Linear(CpgModule):

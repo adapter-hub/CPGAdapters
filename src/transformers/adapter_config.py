@@ -20,6 +20,7 @@ class CpgConfig(Mapping):
     languages: List[str]
     layer_embedding_dim: Optional[int] = None
     use_typology: Optional[bool] = False
+    non_linearity: Optional[str] = None
 
     # we want to emulate a simple form of immutability while keeping the ability to add custom attributes.
     # therefore, we don't allow changing attribute values if set once.
@@ -257,6 +258,80 @@ class UrielCpgConfig(AdapterConfig):
 
 
 @dataclass
+class UrielCpgConfigWithNonLinearity(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = False
+    non_linearity: str = "relu"
+    reduction_factor: int = 16
+    #invertible_adapter: Optional[dict] = InvertibleAdapterConfig(
+    #    block_type="nice", non_linearity="relu", reduction_factor=2
+    #)
+    cpg: Optional[CpgConfig] = CpgConfig(
+        language_embedding_dim=32,
+        languages = ["en", "ceb", "vi", "ja", "arz", "zh", "ko", "fi", "tr", "eu", "ce",
+                     "ka", "th", "ta", "ht", "sw", "qu", "mn", "nv", "nci", "ab", "ay",
+                     "gn", "atj", "fr", "km", "ha", "new", "hu", "tt", "lez", "xmf",
+                     "shn", "te", "yo", "bxr", "kbd", "ru", "war", "sat", "kab", "my",
+                     "mrj", "uz", "av", "lo", "tcy", "nso", "xal", "fa", "id", "so", "bo",
+                     "se", "cv", "lbe", "za", "ml", "sn", "hy", "ms", "ar", "nan", "myv",
+                     "sah", "inh", "kn", "zu", "el", "min", "om", "kv", "azb", "ln", "la",
+                     "mg", "he", "wuu", "et", "kk", "ig", "cy", "tl", "am", "cdo", "mhr",
+                     "ug", "rw", "sq", "jv", "mt", "hak", "smn" ,"tyv", "kbp", "sv", "su",
+                     "ary"],
+        use_typology=True,
+        non_linearity='relu')
+
+
+@dataclass
+class UrielCpgConfigWithLayerSharing(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = True
+    non_linearity: str = "relu"
+    reduction_factor: int = 16
+    #invertible_adapter: Optional[dict] = InvertibleAdapterConfig(
+    #    block_type="nice", non_linearity="relu", reduction_factor=2
+    #)
+    cpg: Optional[CpgConfig] = CpgConfig(
+        language_embedding_dim=32,
+        languages = ["en", "ceb", "vi", "ja", "arz", "zh", "ko", "fi", "tr", "eu", "ce",
+                     "ka", "th", "ta", "ht", "sw", "qu", "mn", "nv", "nci", "ab", "ay",
+                     "gn", "atj", "fr", "km", "ha", "new", "hu", "tt", "lez", "xmf",
+                     "shn", "te", "yo", "bxr", "kbd", "ru", "war", "sat", "kab", "my",
+                     "mrj", "uz", "av", "lo", "tcy", "nso", "xal", "fa", "id", "so", "bo",
+                     "se", "cv", "lbe", "za", "ml", "sn", "hy", "ms", "ar", "nan", "myv",
+                     "sah", "inh", "kn", "zu", "el", "min", "om", "kv", "azb", "ln", "la",
+                     "mg", "he", "wuu", "et", "kk", "ig", "cy", "tl", "am", "cdo", "mhr",
+                     "ug", "rw", "sq", "jv", "mt", "hak", "smn" ,"tyv", "kbp", "sv", "su",
+                     "ary"],
+        use_typology=True,
+        layer_embedding_dim=32)
+
+
+@dataclass
 class PfeifferConfig(AdapterConfig):
     """
     The adapter architecture proposed by Pfeiffer et. al., 2020.
@@ -304,6 +379,8 @@ ADAPTER_CONFIG_MAP = {
         "houlsby": HoulsbyConfig(),
         "cpg": TestCpgConfig(),
         "uriel-cpg": UrielCpgConfig(),
+        "non-linear-uriel-cpg": UrielCpgConfigWithNonLinearity(),
+        "sharing-uriel-cpg": UrielCpgConfigWithLayerSharing(),
         "inv-cpg": CpgConfigWithInvertibleAdapter(),
 }
 

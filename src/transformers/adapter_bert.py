@@ -69,6 +69,21 @@ class BertSelfOutputAdaptersMixin:
             else:
                 raise ValueError("Invalid adapter type '{}'.".format(adapter_type))
 
+    def copy_adapter(self, source, adapter_name, adapter_type):
+        if adapter_type == AdapterType.text_task:
+            if adapter_name in source.attention_text_task_adapters:
+                self.attention_text_task_adapters[adapter_name] = source.attention_text_task_adapters[adapter_name]
+        elif adapter_type == AdapterType.text_lang:
+            if adapter_name in source.attention_text_lang_adapters:
+                self.attention_text_lang_adapters[adapter_name] = source.attention_text_lang_adapters[adapter_name]
+        else:
+            raise ValueError("Invalid adapter type '{}'.".format(adapter_type))
+
+    def decontextualise(self, adapter_name, context_embedding):
+        logging.info(list(self.attention_text_lang_adapters.keys()))
+        if adapter_name in self.attention_text_lang_adapters:
+            self.attention_text_lang_adapters[adapter_name].decontextualise(context_embedding)
+
     def add_fusion_layer(self, adapter_names):
         """See BertModel.add_attention_layer"""
         adapter_names = adapter_names if isinstance(adapter_names, list) else adapter_names.split(",")
@@ -214,7 +229,7 @@ class BertSelfOutputAdaptersMixin:
         return hidden_states
 
     def adapters_forward(self, hidden_states, input_tensor, adapter_names=None,
-                         cpg_environments=None, language=None):
+                         cpg_environments=None, language=None, layer_num=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -230,7 +245,10 @@ class BertSelfOutputAdaptersMixin:
             for adapter_stack in adapter_names:
                 if cpg_environments and adapter_stack[0] in cpg_environments:
                     assert language is not None
-                    context = {'language': language}
+                    context = {
+                            'language': language,
+                            'layer': f'layer_{layer_num}'
+                    }
                     context_embedding = cpg_environments[adapter_stack[0]](context)
                 else:
                     context_embedding = None
@@ -288,6 +306,21 @@ class BertOutputAdaptersMixin:
                 self.layer_text_lang_adapters[adapter_name] = adapter
             else:
                 raise ValueError("Invalid adapter type '{}'.".format(adapter_type))
+
+    def copy_adapter(self, source, adapter_name, adapter_type):
+        if adapter_type == AdapterType.text_task:
+            if adapter_name in source.layer_text_task_adapters:
+                self.layer_text_task_adapters[adapter_name] = source.layer_text_task_adapters[adapter_name]
+        elif adapter_type == AdapterType.text_lang:
+            if adapter_name in source.layer_text_lang_adapters:
+                self.layer_text_lang_adapters[adapter_name] = source.layer_text_lang_adapters[adapter_name]
+        else:
+            raise ValueError("Invalid adapter type '{}'.".format(adapter_type))
+
+    def decontextualise(self, adapter_name, context_embedding):
+        logging.info(list(self.layer_text_lang_adapters.keys()))
+        if adapter_name in self.layer_text_lang_adapters:
+            self.layer_text_lang_adapters[adapter_name].decontextualise(context_embedding)
 
     def enable_adapters(self, adapter_names: list, unfreeze_adapters: bool, unfreeze_fusion: bool):
 
@@ -426,7 +459,8 @@ class BertOutputAdaptersMixin:
     def adapters_forward(self, hidden_states, input_tensor,
                          adapter_names=None,
                          cpg_environments=None,
-                         language=None):
+                         language=None,
+                         layer_num=None):
 
         if adapter_names is not None:
             adapter_names = parse_adapter_names(adapter_names)
@@ -446,7 +480,10 @@ class BertOutputAdaptersMixin:
                 #        adapter_stack, str(cpg_environments)))
                 if cpg_environments and adapter_stack[0] in cpg_environments:
                     assert language is not None
-                    context = {'language': language}
+                    context = {
+                            'language': language,
+                            'layer': f'layer_{layer_num}'
+                    }
                     context_embedding = cpg_environments[adapter_stack[0]](context)
                 else:
                     context_embedding = None
@@ -477,6 +514,14 @@ class BertLayerAdaptersMixin:
         self.attention.output.add_adapter(adapter_name, adapter_type)
         self.output.add_adapter(adapter_name, adapter_type)
 
+    def copy_adapter(self, layer, adapter_name: str, adapter_type: AdapterType):
+        self.attention.output.copy_adapter(layer.attention.output, adapter_name, adapter_type)
+        self.output.copy_adapter(layer.output, adapter_name, adapter_type)
+
+    def decontextualise(self, adapter_name, context_embedding):
+        self.attention.output.decontextualise(adapter_name, context_embedding)
+        self.output.decontextualise(adapter_name, context_embedding)
+
     def enable_adapters(self, adapter_names: list, unfreeze_adapters: bool, unfreeze_attention: bool):
         self.attention.output.enable_adapters(adapter_names, unfreeze_adapters, unfreeze_attention)
         self.output.enable_adapters(adapter_names, unfreeze_adapters, unfreeze_attention)
@@ -494,8 +539,19 @@ class BertEncoderAdaptersMixin:
         adapter_config = self.config.adapters.get(adapter_name)
         leave_out = adapter_config.get("leave_out", [])
         for i, layer in enumerate(self.layer):
-            if i not in leave_out:
+            if i in leave_out:
+                continue
+            if i == 0 or not adapter_config['share_across_layers']:
                 layer.add_adapter(adapter_name, adapter_type)
+            else:
+                layer.copy_adapter(self.layer[0], adapter_name, adapter_type)
+
+    def decontextualise(self, adapter_name, context_embedding):
+        adapter_config = self.config.adapters.get(adapter_name)
+        leave_out = adapter_config.get("leave_out", [])
+        for i, layer in enumerate(self.layer):
+            if i not in leave_out:
+                layer.decontextualise(adapter_name, context_embedding)
 
     def enable_adapters(self, adapter_names: list, unfreeze_adapters: bool, unfreeze_attention: bool):
         for layer in self.layer:
@@ -575,19 +631,23 @@ class BertModelAdaptersMixin(ModelAdaptersMixin):
         if adapter_type == AdapterType.text_lang and config['invertible_adapter']:
             self.add_invertible_lang_adapter(adapter_name)
 
+    def decontextualise(self, adapter_name, context_embedding):
+        self.encoder.decontextualise(adapter_name, context_embedding)
+
     def add_cpg_environment(self, adapter_name, cpg_config):
         properties = []
         if cpg_config.get('use_typology', False):
             language_property = cpg.UrielMlpProperty(
-                    'language', cpg_config['language_embedding_dim'], cpg_config['languages'])
+                    'language', cpg_config['language_embedding_dim'], cpg_config['languages'],
+                    activation=cpg_config.get('non_linearity', None))
         else:
             language_property = cpg.Property(
                     'language', cpg_config['language_embedding_dim'], cpg_config['languages'])
         properties.append(language_property)
-        #if cpg_config['layer_embedding_dim']:
-        #    layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
-        #    properties.append(cpg.Property(
-        #            'layer', cpg_config['layer_embedding_dim'], layers))
+        if cpg_config['layer_embedding_dim']:
+            layers = ['layer_%d' % layer for layer in range(self.config.num_hidden_layers)]
+            properties.append(cpg.Property(
+                    'layer', cpg_config['layer_embedding_dim'], layers))
         environment = cpg.Environment(properties)
         self.cpg_environments[adapter_name] = environment
         return environment
