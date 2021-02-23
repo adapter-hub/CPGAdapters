@@ -83,10 +83,10 @@ class AdapterConfig(Mapping):
     ln_before: bool
     ln_after: bool
     mh_adapter: bool
-    share_across_layers: bool
     output_adapter: bool
     non_linearity: str
     reduction_factor: int
+    share_across_layers: Optional[bool] = False
     invertible_adapter: Optional[InvertibleAdapterConfig] = None
     cpg: Optional[CpgConfig] = None
     leave_out: List[int] = field(default_factory=list)

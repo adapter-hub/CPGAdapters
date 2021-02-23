@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score
 import torch
 from torch import nn
@@ -216,30 +217,37 @@ def main():
                 leave_out = [model.config.num_hidden_layers - 1]
             else:
                 leave_out = []
-            lang_adapter_config = AdapterConfig.load(
-                adapter_args.lang_adapter_config,
-                non_linearity=adapter_args.lang_adapter_non_linearity,
-                reduction_factor=adapter_args.lang_adapter_reduction_factor,
-                leave_out=leave_out,
-            )
-            # load the language adapter from Hub
-            lang_adapter_name = model.load_adapter(
-                adapter_args.load_lang_adapter,
-                AdapterType.text_lang,
-                config=lang_adapter_config,
-                load_as=adapter_args.language,
-                with_embeddings=True,
-            )
+            if adapter_args.load_lang_adapter.endswith('.csv'):
+                adapter_df = pd.read_csv(adapter_args.load_lang_adapter, na_filter=False)
+                adapter_dir = os.path.dirname(adapter_args.load_lang_adapter)
+                adapter_list = [
+                        (lang, os.path.join(adapter_dir, lang))
+                        for lang in adapter_df['iso_code']
+                ]
+                adapter_names = [[None], [data_args.task]]
+            else:
+                adapter_list = [(adapter_args.language, adapter_args.load_lang_adapter)]
+                adapter_names = [[adapter_args.language], [data_args.task]]
+            for language, adapter_dir in adapter_list:
+                lang_adapter_config = AdapterConfig.load(
+                    adapter_args.lang_adapter_config,
+                    non_linearity=adapter_args.lang_adapter_non_linearity,
+                    reduction_factor=adapter_args.lang_adapter_reduction_factor,
+                    leave_out=leave_out,
+                )
+                # load the language adapter from Hub
+                model.load_adapter(
+                    adapter_dir,
+                    AdapterType.text_lang,
+                    config=lang_adapter_config,
+                    load_as=language,
+                    with_embeddings=True,
+                )
         else:
-            lang_adapter_name = None
+            adapter_names = [data_args.task]
         # Freeze all model weights except of those of this adapter
         model.train_adapter([data_args.task])
-        # Set the adapters to be used in every forward pass
-        if lang_adapter_name:
-            adapter_names = [[lang_adapter_name], [data_args.task]]
-            model.set_active_adapters(adapter_names)
-        else:
-            model.set_active_adapters([data_args.task])
+        #model.set_active_adapters(adapter_names)
 
     for name, param in model.named_parameters():
         logging.info('%s: %s' % (name, str(param.requires_grad)))

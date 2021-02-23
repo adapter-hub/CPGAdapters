@@ -541,7 +541,7 @@ class BertEncoderAdaptersMixin:
         for i, layer in enumerate(self.layer):
             if i in leave_out:
                 continue
-            if i == 0 or not adapter_config['share_across_layers']:
+            if i == 0 or not adapter_config.get('share_across_layers', False):
                 layer.add_adapter(adapter_name, adapter_type)
             else:
                 layer.copy_adapter(self.layer[0], adapter_name, adapter_type)

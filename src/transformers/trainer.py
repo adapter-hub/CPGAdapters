@@ -1,3 +1,4 @@
+import copy
 import logging
 import math
 import os
@@ -670,7 +671,17 @@ class Trainer:
             inputs["mems"] = self._past
 
         if self.adapter_names:
-            inputs["adapter_names"] = self.adapter_names
+            adapters_for_step = copy.deepcopy(self.adapter_names)
+            if 'language' in inputs:
+                for i in range(len(adapters_for_step)):
+                    if adapters_for_step[i] is None:
+                        adapters_for_step[i] = inputs['language']
+                    elif isinstance(adapters_for_step[i], list):
+                        for j in range(len(adapters_for_step[i])):
+                            if adapters_for_step[i][j] is None:
+                                adapters_for_step[i][j] = inputs['language']
+            model.set_active_adapters(adapters_for_step)
+            inputs["adapter_names"] = adapters_for_step
 
         outputs = model(**inputs)
         loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
@@ -885,7 +896,17 @@ class Trainer:
                 inputs["mems"] = past
 
             if self.adapter_names:
-                inputs["adapter_names"] = self.adapter_names
+                adapters_for_step = copy.deepcopy(self.adapter_names)
+                if 'language' in inputs:
+                    for i in range(len(adapters_for_step)):
+                        if adapters_for_step[i] is None:
+                            adapters_for_step[i] = inputs['language']
+                        elif isinstance(adapters_for_step[i], list):
+                            for j in range(len(adapters_for_step[i])):
+                                if adapters_for_step[i][j] is None:
+                                    adapters_for_step[i][j] = inputs['language']
+                model.set_active_adapters(adapters_for_step)
+                inputs["adapter_names"] = adapters_for_step
 
             with torch.no_grad():
                 outputs = model(**inputs)
