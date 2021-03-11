@@ -66,24 +66,24 @@ class CPGCollator:
                 dtype = torch.long if type(first["label_ids"][0]) is int else torch.float
                 batch["labels"] = torch.tensor([f["label_ids"] for f in features], dtype=dtype)
 
-        if self.train:
-            import random
-            nr_labels = (len(features[0]['input_ids']) - self.max_length) // self.max_label_length
-            for f in features:
-
-                if self.hp_dict['sample_nota'] and  random.random() < self.hp_dict['nota_prob']:
-
-                    a = set(range(nr_labels))
-                    a.discard(f['label'])
-
-                    pos = f['label'] if random.random() > 0.5 else random.choice(list(a))
-
-                    start = pos * self.max_label_length + self.max_length
-                    end = pos * self.max_label_length + self.max_length + self.max_label_length
-
-                    f['input_ids'][start:end] = self.noneoftheabove['input_ids'][0]
-
-                    f['attention_mask'][start:end] = self.noneoftheabove['attention_mask'][0]
+        # if self.train:
+        #     import random
+        #     nr_labels = (len(features[0]['input_ids']) - self.max_length) // self.max_label_length
+        #     for f in features:
+        #
+        #         if self.hp_dict['sample_nota'] and  random.random() < self.hp_dict['nota_prob']:
+        #
+        #             a = set(range(nr_labels))
+        #             a.discard(f['label'])
+        #
+        #             pos = f['label'] if random.random() > 0.5 else random.choice(list(a))
+        #
+        #             start = pos * self.max_label_length + self.max_length
+        #             end = pos * self.max_label_length + self.max_length + self.max_label_length
+        #
+        #             f['input_ids'][start:end] = self.noneoftheabove['input_ids'][0]
+        #
+        #             f['attention_mask'][start:end] = self.noneoftheabove['attention_mask'][0]
 
 
 

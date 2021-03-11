@@ -126,14 +126,14 @@ def main():
     logger.info("Training/evaluation parameters %s", training_args)
 
 
-    batch_size = random.choice([16,32])
+    # batch_size = random.choice([16,32])
 
-    adapter = random.choice([True, False])
-
-    if adapter:
-        lr = random.choice([5e-5, 1e-4, 2e-4,5e-4])
-    else:
-        lr = random.choice([1e-5,2e-5,3e-5])
+    # adapter = random.choice([True, False])
+    #
+    # if adapter:
+    #     lr = random.choice([5e-5, 1e-4, 2e-4,5e-4])
+    # else:
+    #     lr = random.choice([1e-5,2e-5,3e-5])
 
     epochs = random.choice(list(range(1,11)))
 
@@ -143,19 +143,20 @@ def main():
 
         "dataset": data_args.task_name,
         "seed": seed,
-        "batch_size": batch_size,
-        "lr": lr,
-        "epochs": epochs,
-        "adapter": adapter,
+        "batch_size": training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps,
+        "lr": training_args.learning_rate,
+        # "epochs": epochs,
+        "max_steps": training_args.max_steps,
+        "adapter": adapter_args.train_adapter,
     }
     # Set seed
     set_seed(seed)
 
-    training_args.per_device_train_batch_size = batch_size
-    training_args.learning_rate = lr
-    training_args.num_train_epochs = epochs
+    # training_args.per_device_train_batch_size = batch_size
+    # training_args.learning_rate = lr
+    # training_args.num_train_epochs = epochs
 
-    adapter_args.train_adapter = adapter
+    # adapter_args.train_adapter = adapter
 
     with open(model_args.score_file, 'a') as f:
         f.write('\n')
@@ -169,8 +170,8 @@ def main():
     # except KeyError:
     #     raise ValueError("Task not found: %s" % (data_args.task_name))
 
-    num_labels = cpg_tasks_num_labels[data_args.task_name]
-    processor = cpg_processors[data_args.task_name]
+    # num_labels = cpg_tasks_num_labels[data_args.task_name]
+    # processor = cpg_processors[data_args.task_name]
 
     # output_mode = cpg_output_modes[task_name]
 
@@ -182,7 +183,7 @@ def main():
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        num_labels=num_labels,
+        num_labels=1,
         finetuning_task=data_args.task_name,
         cache_dir=model_args.cache_dir,
     )
@@ -241,23 +242,33 @@ def main():
         else:
             model.set_active_adapters([task_name])
 
-    # Get datasets
-    train_dataset = ( CPGDataset(data_args,
-                   tokenizer=tokenizer,
-                   cache_dir=model_args.cache_dir,
-                   task_name=data_args.task_name,
-                   mc=True) if training_args.do_train else None)
-
-
-    eval_datasets = [(
-        CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t, mc=True)
-        if training_args.do_eval
-        else None
-    ) for t in cpg_tasks_num_labels.keys()]
-
-    test_datasets = [
+    commonsense_tasks = [
+        'race',
         'copa',
-        "bzs_situation",
+        'piqa',
+        'commonsense_qa',
+        'social_i_qa',
+        'cosmos_qa'
+    ]
+
+    argument_tasks = [
+        "ukp_abortion",
+        "ukp_cloning",
+        "ukp_death_penalty",
+        "ukp_gun_control",
+        "ukp_marijuana_legalization",
+        "ukp_minimum_wage",
+        "ukp_nuclear_energy",
+        "ukp_school_uniforms",
+        "tweeteval_stance_abortion",
+        "tweeteval_stance_atheism",
+        "tweeteval_stance_climate",
+        "tweeteval_stance_feminist",
+        "tweeteval_stance_hillary",
+    ]
+
+    emotion_tasks = [
+        "sst-2",
         "bzs_emotion_fairytale_sentences",
         "bzs_emotion_artificial_sentences",
         "bzs_emotion_tweets",
@@ -267,6 +278,50 @@ def main():
         "tweeteval_irony",
         "tweeteval_offensive",
         "tweeteval_sentiment",
+    ]
+    #  OMP_NUM_THREADS=6  CUDA_VISIBLE_DEVICES=12  python  examples/text-classification/run_cpg.py --model_name_or_path roberta-base --output_dir data_dump/ --do_train --do_eval --per_device_train_batch_size 8 --per_device_eval_batch_size 8 --evaluate_during_training  --eval_steps 10000  --data_dir data/ --logging_steps 100 --overwrite_output_dir --gradient_accumulation_steps 4 --learning_rate 0.0002 --max_steps 200000 --train_adapter --task_name emotion --warmup_steps 200 --save_steps 10000 --score_file random_search/emotion_1.txt
+    if data_args.task_name == 'commonsense':
+        train_task_names = argument_tasks + emotion_tasks
+    elif data_args.task_name == 'emotion':
+        train_task_names = argument_tasks + commonsense_tasks
+    elif data_args.task_name == 'argument':
+        train_task_names = emotion_tasks + commonsense_tasks
+    else:
+        raise Exception("taskname ",  data_args.task_name, ' not found')
+
+    # Get datasets
+    train_dataset = [(
+        CPGDataset(data_args,
+                   tokenizer=tokenizer,
+                   cache_dir=model_args.cache_dir,
+                   task_name=task_name_) if training_args.do_train else None
+    # ) for task_name_ in ['mnli']]
+    ) for task_name_ in train_task_names]
+    eval_datasets = [(
+        CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t)
+        if training_args.do_eval
+        else None
+    ) for t in cpg_tasks_num_labels.keys()]
+
+    test_datasets = [
+        # 'clinic', 'banking', 'hwu',
+
+        'race',
+        'copa',
+
+        "bzs_situation",
+        "bzs_emotion_fairytale_sentences",
+        "bzs_emotion_artificial_sentences",
+         "bzs_emotion_tweets",
+         "bzs_emotion_emotional_events",
+        "tweeteval_emotion",
+        "tweeteval_hate",
+        "tweeteval_irony",
+        "tweeteval_offensive",
+        "tweeteval_sentiment",
+
+        'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
+        'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms',
         "tweeteval_stance_abortion",
         "tweeteval_stance_atheism",
         "tweeteval_stance_climate",
@@ -274,11 +329,48 @@ def main():
         "tweeteval_stance_hillary",
     ]
     # test_dataset = [(
-    eval_datasets += [(
-        CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir,
-                   task_name=test_task_name, mc=True)
+    eval_datasets += [ (
+        CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir, task_name=test_task_name)
         if training_args.do_eval
-        else None) for test_task_name in test_datasets]
+        else None ) for test_task_name in test_datasets]
+    # # Get datasets
+    # train_dataset = ( CPGDataset(data_args,
+    #                tokenizer=tokenizer,
+    #                cache_dir=model_args.cache_dir,
+    #                task_name=data_args.task_name,
+    #                mc=True) if training_args.do_train else None)
+    #
+    #
+    # eval_datasets = [(
+    #     CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t, mc=True)
+    #     if training_args.do_eval
+    #     else None
+    # ) for t in cpg_tasks_num_labels.keys()]
+    #
+    # test_datasets = [
+    #     'copa',
+    #     "bzs_situation",
+    #     "bzs_emotion_fairytale_sentences",
+    #     "bzs_emotion_artificial_sentences",
+    #     "bzs_emotion_tweets",
+    #     "bzs_emotion_emotional_events",
+    #     "tweeteval_emotion",
+    #     "tweeteval_hate",
+    #     "tweeteval_irony",
+    #     "tweeteval_offensive",
+    #     "tweeteval_sentiment",
+    #     "tweeteval_stance_abortion",
+    #     "tweeteval_stance_atheism",
+    #     "tweeteval_stance_climate",
+    #     "tweeteval_stance_feminist",
+    #     "tweeteval_stance_hillary",
+    # ]
+    # # test_dataset = [(
+    # eval_datasets += [(
+    #     CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir,
+    #                task_name=test_task_name, mc=True)
+    #     if training_args.do_eval
+    #     else None) for test_task_name in test_datasets]
 
     # def compute_metrics(p: EvalPrediction) -> Dict:
     #     preds = np.argmax(p.predictions, axis=1)

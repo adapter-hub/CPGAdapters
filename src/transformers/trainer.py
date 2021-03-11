@@ -680,7 +680,21 @@ class Trainer:
                         self._log(logs)
 
                     if self.args.evaluate_during_training and self.global_step % self.args.eval_steps == 0:
-                        self.evaluate()
+
+                        logger.info("*** Evaluate ***")
+
+                        # Loop to handle MNLI double evaluation (matched, mis-matched)
+                        # eval_datasets = [eval_dataset]
+
+                        for eval_dataset in self.eval_dataset:
+                            eval_result = self.evaluate(eval_dataset=eval_dataset)
+
+                            checkpoint_dir = os.path.join(self.args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{self.global_step}")
+                            os.makedirs(checkpoint_dir, exist_ok=True)
+                            with open(os.path.join(checkpoint_dir, 'score_file.txt'), 'a') as f:
+                                f.write(str(eval_result['eval_acc']) + '\t')
+
+                        # self.evaluate()
 
                     if self.args.save_steps > 0 and self.global_step % self.args.save_steps == 0:
                         # In all cases (even distributed/parallel), self.model is always a reference

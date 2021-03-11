@@ -83,6 +83,7 @@ class ModelArguments:
         default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
     )
 
+# OMP_NUM_THREADS=6  CUDA_VISIBLE_DEVICES=12  python  examples/text-classification/run_cpg.py --model_name_or_path roberta-base --output_dir data/emotion_1/ --do_train --do_eval --per_device_train_batch_size 16 --per_device_eval_batch_size 8 --evaluate_during_training  --eval_steps 10000  --data_dir data/ --logging_steps 100 --overwrite_output_dir --gradient_accumulation_steps 2 --learning_rate 0.0002 --max_steps 200000 --train_adapter --task_name emotion --warmup_steps 200 --save_steps 10000 --score_file random_search/emotion_1.txt
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -133,7 +134,7 @@ def main():
     set_seed(seed)
 
     # dataset = random.choice(['commonsense_qa', 'social_i_qa'])
-    dataset = 'social_i_qa'
+    # dataset = 'social_i_qa'
     batch_size = random.choice([16, 32, 64])
     batch_size = 8
     # lr = random.choice([1e-5, 2e-5, 5e-5, 1e-4, 2e-4, 5e-4])
@@ -190,48 +191,48 @@ def main():
     else:
         nota_prob = 0.0
 
-    training_args.max_steps = 12000
-    hp_dict = {
-
-        "dataset": dataset,
-        "batch_size": batch_size,
-        "lr": lr,
-        "epochs": epochs,
-        "only_head": only_head,
-        "label_adapter": label_adapter,
-        "add_label_noise": add_label_noise,
-        "adapter_label_noise": adapter_label_noise,
-        "position_label_noise": position_label_noise,
-        "pass_label_into_classifier": pass_label_into_classifier,
-        "reuse_label_noise": reuse_label_noise,
-        "adapter_layer_context": adapter_layer_context,
-        "cpg_head_positions": cpg_head_positions,
-        "cpg_down_dim": cpg_down_dim,
-        "sample_nota": sample_nota,
-        "nota_prob": nota_prob,
-        "seed": seed,
-    }
-
+    # training_args.max_steps = 12000
     # hp_dict = {
     #
-    #     "dataset": 'social_i_qa',
-    #     "batch_size": 8,
+    #     "dataset": dataset,
+    #     "batch_size": batch_size,
     #     "lr": lr,
     #     "epochs": epochs,
-    #     "only_head": False,
-    #     "label_adapter": True,
-    #     "add_label_noise": False,
-    #     "adapter_label_noise": False,
-    #     "position_label_noise": False,
-    #     "pass_label_into_classifier": False,
-    #     "reuse_label_noise": False,
-    #     "adapter_layer_context": False,
-    #     "cpg_head_positions": True,
-    #     "cpg_down_dim": 10,
-    #     "sample_nota": True,
-    #     "nota_prob": 0.1,
+    #     "only_head": only_head,
+    #     "label_adapter": label_adapter,
+    #     "add_label_noise": add_label_noise,
+    #     "adapter_label_noise": adapter_label_noise,
+    #     "position_label_noise": position_label_noise,
+    #     "pass_label_into_classifier": pass_label_into_classifier,
+    #     "reuse_label_noise": reuse_label_noise,
+    #     "adapter_layer_context": adapter_layer_context,
+    #     "cpg_head_positions": cpg_head_positions,
+    #     "cpg_down_dim": cpg_down_dim,
+    #     "sample_nota": sample_nota,
+    #     "nota_prob": nota_prob,
     #     "seed": seed,
     # }
+
+    hp_dict = {
+
+        "dataset": data_args.task_name,
+        "batch_size": training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps,
+        "lr": training_args.learning_rate,
+        "max_steps": training_args.max_steps,
+        "only_head": False,
+        "label_adapter": True,
+        "add_label_noise": True,
+        "adapter_label_noise": False,
+        "position_label_noise": False,
+        "pass_label_into_classifier": False,
+        "reuse_label_noise": False,
+        "adapter_layer_context": False,
+        "cpg_head_positions": True,
+        "cpg_down_dim": 300,
+        "sample_nota": False,
+        "nota_prob": 0.0,
+        "seed": seed,
+    }
 
 
     with open(model_args.score_file, 'a') as f:
@@ -239,16 +240,16 @@ def main():
         for k,v in hp_dict.items():
             f.write(str(v) + '\t')
 
-    training_args.per_device_train_batch_size = hp_dict['batch_size']
-    training_args.learning_rate = hp_dict['lr']
-    training_args.num_train_epochs = hp_dict['epochs']
+    # training_args.per_device_train_batch_size = hp_dict['batch_size']
+    # training_args.learning_rate = hp_dict['lr']
+    # training_args.num_train_epochs = hp_dict['epochs']
     data_args.task_name = hp_dict['dataset']
 
 
 
     task_name = hp_dict['dataset']
-    num_labels = cpg_tasks_num_labels[task_name]
-    output_mode = cpg_output_modes[task_name]
+    # num_labels = cpg_tasks_num_labels[task_name]
+    # output_mode = cpg_output_modes[task_name]
 
     # Load pretrained model and tokenizer
     #
@@ -258,7 +259,7 @@ def main():
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        num_labels=num_labels,
+        num_labels=1,
         finetuning_task=task_name,
         cache_dir=model_args.cache_dir,
     )
@@ -354,6 +355,53 @@ def main():
         else:
             model.set_active_adapters([task_name])
 
+    commonsense_tasks = [
+        'race',
+        'copa',
+        'piqa',
+        'commonsense_qa',
+        'social_i_qa',
+        'cosmos_qa'
+    ]
+
+    argument_tasks = [
+        "ukp_abortion",
+        "ukp_cloning",
+        "ukp_death_penalty",
+        "ukp_gun_control",
+        "ukp_marijuana_legalization",
+        "ukp_minimum_wage",
+        "ukp_nuclear_energy",
+        "ukp_school_uniforms",
+        "tweeteval_stance_abortion",
+        "tweeteval_stance_atheism",
+        "tweeteval_stance_climate",
+        "tweeteval_stance_feminist",
+        "tweeteval_stance_hillary",
+    ]
+
+    emotion_tasks = [
+        "sst-2",
+        "bzs_emotion_fairytale_sentences",
+        "bzs_emotion_artificial_sentences",
+        "bzs_emotion_tweets",
+        "bzs_emotion_emotional_events",
+        "tweeteval_emotion",
+        "tweeteval_hate",
+        "tweeteval_irony",
+        "tweeteval_offensive",
+        "tweeteval_sentiment",
+    ]
+    #  OMP_NUM_THREADS=6  CUDA_VISIBLE_DEVICES=12  python  examples/text-classification/run_cpg.py --model_name_or_path roberta-base --output_dir data_dump/ --do_train --do_eval --per_device_train_batch_size 8 --per_device_eval_batch_size 8 --evaluate_during_training  --eval_steps 10000  --data_dir data/ --logging_steps 100 --overwrite_output_dir --gradient_accumulation_steps 4 --learning_rate 0.0002 --max_steps 200000 --train_adapter --task_name emotion --warmup_steps 200 --save_steps 10000 --score_file random_search/emotion_1.txt
+    if data_args.task_name == 'commonsense':
+        train_task_names = argument_tasks + emotion_tasks
+    elif data_args.task_name == 'emotion':
+        train_task_names = argument_tasks + commonsense_tasks
+    elif data_args.task_name == 'argument':
+        train_task_names = emotion_tasks + commonsense_tasks
+    else:
+        raise Exception("taskname ",  data_args.task_name, ' not found')
+
     # Get datasets
     train_dataset = [(
         CPGDataset(data_args,
@@ -361,8 +409,7 @@ def main():
                    cache_dir=model_args.cache_dir,
                    task_name=task_name_) if training_args.do_train else None
     # ) for task_name_ in ['mnli']]
-    ) for task_name_ in ['clinic', 'banking', 'hwu', 'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
-                         'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms', 'piqa','commonsense_qa', 'social_i_qa']]
+    ) for task_name_ in train_task_names]
     eval_datasets = [(
         CPGDataset(data_args, tokenizer=tokenizer, mode="dev", cache_dir=model_args.cache_dir, task_name=t)
         if training_args.do_eval
@@ -370,29 +417,32 @@ def main():
     ) for t in cpg_tasks_num_labels.keys()]
 
     test_datasets = [
-        'clinic', 'banking', 'hwu',
-        'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
-                         'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms',
+        # 'clinic', 'banking', 'hwu',
+
         'race',
         'copa',
+
         "bzs_situation",
         "bzs_emotion_fairytale_sentences",
         "bzs_emotion_artificial_sentences",
-                     "bzs_emotion_tweets",
-                     "bzs_emotion_emotional_events",
-    "tweeteval_emotion",
-    "tweeteval_hate",
-    "tweeteval_irony",
-    "tweeteval_offensive",
-    "tweeteval_sentiment",
-    "tweeteval_stance_abortion",
-    "tweeteval_stance_atheism",
-    "tweeteval_stance_climate",
-    "tweeteval_stance_feminist",
-    "tweeteval_stance_hillary",
+         "bzs_emotion_tweets",
+         "bzs_emotion_emotional_events",
+        "tweeteval_emotion",
+        "tweeteval_hate",
+        "tweeteval_irony",
+        "tweeteval_offensive",
+        "tweeteval_sentiment",
+
+        'ukp_abortion', 'ukp_cloning', 'ukp_death_penalty', 'ukp_gun_control', 'ukp_marijuana_legalization',
+        'ukp_minimum_wage', 'ukp_nuclear_energy', 'ukp_school_uniforms',
+        "tweeteval_stance_abortion",
+        "tweeteval_stance_atheism",
+        "tweeteval_stance_climate",
+        "tweeteval_stance_feminist",
+        "tweeteval_stance_hillary",
     ]
-    test_dataset = [(
-    # eval_datasets += [ (
+    # test_dataset = [(
+    eval_datasets += [ (
         CPGDataset(data_args, tokenizer=tokenizer, mode="test", cache_dir=model_args.cache_dir, task_name=test_task_name)
         if training_args.do_eval
         else None ) for test_task_name in test_datasets]
@@ -419,14 +469,18 @@ def main():
 
     noneoftheabove= tokenizer(
             [tokenizer.sep_token + "None of the above" + tokenizer.sep_token],
-            max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
+            # max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
+            max_length=10,
             padding="max_length",
             truncation=True,
             add_special_tokens=False
         )
 
-    dc = CPGCollator(max_label_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
-                        max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][0],
+    dc = CPGCollator(
+        # max_label_length=cpg_seq_lengths[hp_dict['dataset']]['train'][1],
+        max_label_length=10,
+        #                 max_length=cpg_seq_lengths[hp_dict['dataset']]['train'][0],
+                        max_length=128,
                      noneoftheabove=noneoftheabove,
                      hp_dict=hp_dict
                      )
@@ -436,7 +490,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        # eval_dataset=eval_dataset,
+        eval_dataset=eval_datasets,
         compute_metrics=build_compute_metrics_fn(),
         do_save_full_model=not adapter_args.train_adapter,
         do_save_adapters=adapter_args.train_adapter,

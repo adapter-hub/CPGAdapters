@@ -94,8 +94,15 @@ def _cpg_convert_examples_to_features(
             return [label_map[el] for el in example.label]
         return label_map[example.label]
     # print("TRAIN:")
-    # print(max([len(ex) for ex in tokenizer([(example.text_a) for example in examples], truncation=True, )['input_ids']]))
-    # print(max([len(ex) for i in range(len(examples[0].text_b)) for ex in tokenizer([(tokenizer.sep_token + example.text_b[i] + tokenizer.sep_token) for example in examples],   truncation=True, add_special_tokens=True )['input_ids'] ]))
+    max_length = max([len(ex) for ex in tokenizer([(example.text_a) for example in examples], truncation=True, )['input_ids']])
+    max_label_length = max([len(ex) for i in range(len(examples[0].text_b)) for ex in tokenizer([(tokenizer.sep_token + example.text_b[i] + tokenizer.sep_token) for example in examples],   truncation=True, add_special_tokens=True )['input_ids'] ])
+
+    if max_length < (max_label_length * len(examples[0].text_b)):
+        if max_length + (max_label_length * len(examples[0].text_b)) > 512:
+            max_label_length = (512 - max_length) // len(examples[0].text_b)
+    else:
+        if max_length + (max_label_length * len(examples[0].text_b)) > 512:
+            max_length = 512 - (max_label_length * len(examples[0].text_b))
 
     labels = [label_from_example(example) for example in examples]
 
@@ -111,7 +118,7 @@ def _cpg_convert_examples_to_features(
     # max([len(ex) for i in range(len(examples[0].text_b)) for ex in tokenizer([(tokenizer.sep_token + example.text_b[i] + tokenizer.sep_token) for example in examples],   truncation=True, add_special_tokens=True )['input_ids'] ])
     for i in range(len(examples[0].text_b)):
         batch_encoding_labels.append(tokenizer(
-            [(example.text_b[i] + tokenizer.sep_token) for example in examples],
+            [(tokenizer.sep_token + example.text_b[i] + tokenizer.sep_token) for example in examples],
             max_length=max_label_length,
             padding="max_length",
             truncation=True,
@@ -722,14 +729,14 @@ class CPGProcessor(DataProcessor):
                 if i == 0:
                     continue
                 guid = "%s-%s" % (set_type, i)
-                text_a = line[text_index]
+                text_a = line[text_index] + ' What is the sentiment?'
                 text_b = ["Negative.", "Positive"]
                 label = None if set_type == "test" else int(line[1])
             elif self.task_name.startswith('bzs_emotion'):
 
                 if line[1] in self.task_name:
                     guid = "%s-%s" % (set_type, i)
-                    text_a = line[2]
+                    text_a = line[2] + ' What is the emotion?'
                     text_b = self.get_labels(self.task_name)
                     text_b[-1] = "None of the above."
                     label = line[0]
@@ -771,54 +778,54 @@ class CPGProcessor(DataProcessor):
                 text_a = line[1]
 
             elif self.task_name == 'tweeteval_emotion':
-                text_a = line[0]
+                text_a = line[0] + ' What is the emotion?'
                 label = line[1]
                 text_b = ['anger', 'joy', 'optimism', 'sadness']
 
             elif self.task_name == 'tweeteval_hate':
-                text_a = line[0]
+                text_a = line[0] + ' Is this hateful?'
                 label = line[1]
-                text_b = ['not hateful', 'hateful',]
+                text_b = ['No, this is not hateful.', 'Yes, this is hateful.',]
 
             elif self.task_name == 'tweeteval_irony':
-                text_a = line[0]
+                text_a = line[0] + ' Is this ironic?'
                 label = line[1]
-                text_b = ['not irony', 'iron',]
+                text_b = ['No, this it not irony.', 'Yes, this is irony.',]
 
             elif self.task_name == 'tweeteval_offensive':
-                text_a = line[0]
+                text_a = line[0] + ' Is this offensive?'
                 label = line[1]
-                text_b = ['not offensive', 'offensive',]
+                text_b = ['No, this is not offensive.', 'Yes, this is offensive.',]
 
             elif self.task_name == 'tweeteval_sentiment':
-                text_a = line[0]
+                text_a = line[0] + ' What is the sentiment?'
                 label = line[1]
-                text_b = ['negative', 'neutral', 'positive',]
+                text_b = ['negative', 'None of the above.', 'positive',]
 
             elif self.task_name == 'tweeteval_stance_abortion':
-                text_a = line[0]
+                text_a = line[0] + ' What is the argument?'
                 label = line[1]
-                text_b = ['neutral', 'against legalizing abortion', 'in favor of legalizing abortion',]
+                text_b = ['None of the above.', 'The argument is against legalizing abortion.', 'The argument is in favor of legalizing abortion.',]
 
             elif self.task_name == 'tweeteval_stance_atheism':
-                text_a = line[0]
+                text_a = line[0] + ' What is the argument?'
                 label = line[1]
-                text_b = ['neutral', 'religious', 'atheist',]
+                text_b = ['None of the above.', 'The argument is against atheism.', 'The argument is in favor of atheism.',]
 
             elif self.task_name == 'tweeteval_stance_climate':
-                text_a = line[0]
+                text_a = line[0] + ' What is the argument?'
                 label = line[1]
-                text_b = ['neutral', 'climate change is not a concern', 'climate change is a concern',]
+                text_b = ['None of the above.', 'The argument is that climate change is not a concern.', 'The argument is that climate change is a concern.',]
 
             elif self.task_name == 'tweeteval_stance_feminist':
-                text_a = line[0]
+                text_a = line[0] + ' What is the argument?'
                 label = line[1]
-                text_b = ['neutral', 'against feminist movement', 'in favor of feminist movement',]
+                text_b = ['None of the above.', 'The argument is against the feminist movement.', 'The argument is in favor of the feminist movement.',]
 
             elif self.task_name == 'tweeteval_stance_hillary':
-                text_a = line[0]
+                text_a = line[0]  + ' What is the argument?'
                 label = line[1]
-                text_b = ['neutral', 'against Hillary Clinton', 'in favor of Hillary Clinton',]
+                text_b = ['None of the above.', 'The argument is against Hillary Clinton.', 'The argument is in favor of Hillary Clinton.',]
 
             elif self.task_name == 'mnli':
                 if i == 0:
@@ -846,9 +853,9 @@ class CPGProcessor(DataProcessor):
 
             elif self.task_name.startswith('ukp'):
                 concept = self.task_name[4:].replace('_', ' ') + '.'
-                text_a = line[4]
+                text_a = line[4] + ' What is the argument?'
                 label = line[5]
-                text_b = ['Argument for ' + concept, "Argument against " + concept, 'None of the above.']
+                text_b = ['The argument is for ' + concept + ".", "The argument is against " + concept + ".", 'None of the above.']
 
             if self.task_name in ['clinic', 'banking', 'hwu']:
                 if i == 0: continue
@@ -869,17 +876,9 @@ def return_class(task_name, ds):
     return cpg_tasks_num_labels[task_name]
 
 cpg_tasks_num_labels = {
-    'banking': 77,
-    'clinic': 150,
-    'hwu': 64,
-    "ukp_abortion": 3,
-    "ukp_cloning": 3,
-    "ukp_death_penalty": 3,
-    "ukp_gun_control": 3,
-    "ukp_marijuana_legalization": 3,
-    "ukp_minimum_wage": 3,
-    "ukp_nuclear_energy": 3,
-    "ukp_school_uniforms": 3,
+    # 'banking': 77,
+    # 'clinic': 150,
+    # 'hwu': 64,
     "piqa": 2,
     "cosmos_qa": 4,
     "race": 4,
@@ -899,6 +898,15 @@ cpg_tasks_num_labels = {
     "tweeteval_irony": 2,
     "tweeteval_offensive": 2,
     "tweeteval_sentiment": 3,
+
+    "ukp_abortion": 3,
+    "ukp_cloning": 3,
+    "ukp_death_penalty": 3,
+    "ukp_gun_control": 3,
+    "ukp_marijuana_legalization": 3,
+    "ukp_minimum_wage": 3,
+    "ukp_nuclear_energy": 3,
+    "ukp_school_uniforms": 3,
     "tweeteval_stance_abortion": 3,
     "tweeteval_stance_atheism": 3,
     "tweeteval_stance_climate": 3,
