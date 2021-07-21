@@ -294,7 +294,10 @@ def read_ner_examples_from_file(data_dir, mode):
                     words = []
                     labels = []
             else:
-                splits = line.split("\t")
+                if '\t' in line:
+                    splits = line.split("\t")
+                else:
+                    splits = line.split()
                 words.append(splits[0])
                 if len(splits) > 1:
                     labels.append(splits[-1].replace("\n", ""))
@@ -478,4 +481,6 @@ def get_labels(task: str, path: str = None) -> List[str]:
     elif task == "udpos":
         return ['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART',
                 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X']
+        #return ['NOUN', 'PUNCT', 'ADP', 'NUM', 'SYM', 'SCONJ', 'ADJ', 'PART', 'DET', 'CCONJ', 'PROPN',
+        #        'PRON', 'X', '_', 'ADV', 'INTJ', 'VERB', 'AUX']
 

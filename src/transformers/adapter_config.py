@@ -6,6 +6,9 @@ from dataclasses import FrozenInstanceError, asdict, dataclass, field, is_datacl
 from os.path import isfile
 from typing import List, Optional, Union
 
+import numpy as np
+import lang2vec.lang2vec as l2v
+
 from . import cpg
 from .adapter_utils import AdapterType, get_adapter_config_hash, resolve_adapter_config
 
@@ -87,6 +90,8 @@ class AdapterConfig(Mapping):
     non_linearity: str
     reduction_factor: int
     share_across_layers: Optional[bool] = False
+    new_attention_norm: Optional[bool] = False
+    attention_type: Optional[str] = 'sent-lvl-dynamic'
     invertible_adapter: Optional[InvertibleAdapterConfig] = None
     cpg: Optional[CpgConfig] = None
     leave_out: List[int] = field(default_factory=list)
@@ -355,6 +360,27 @@ class PfeifferConfig(AdapterConfig):
 
 
 @dataclass
+class PfeifferNoInvAdapConfig(AdapterConfig):
+    """
+    The adapter architecture proposed by Pfeiffer et. al., 2020.
+    Described in https://arxiv.org/pdf/2005.00247.pdf.
+    """
+
+    original_ln_before: bool = True
+    original_ln_after: bool = True
+    residual_before_ln: bool = True
+    adapter_residual_before_ln: bool = False
+    ln_before: bool = False
+    ln_after: bool = False
+    mh_adapter: bool = False
+    output_adapter: bool = True
+    share_across_layers: bool = False
+    non_linearity: str = "relu"
+    reduction_factor: int = 16
+    invertible_adapter: Optional[dict] = None
+
+
+@dataclass
 class HoulsbyConfig(AdapterConfig):
     """
     The adapter architecture proposed by Houlsby et. al., 2019.
@@ -376,6 +402,7 @@ class HoulsbyConfig(AdapterConfig):
 
 ADAPTER_CONFIG_MAP = {
         "pfeiffer": PfeifferConfig(),
+        "pfeiffer-no-inv": PfeifferNoInvAdapConfig(),
         "houlsby": HoulsbyConfig(),
         "cpg": TestCpgConfig(),
         "uriel-cpg": UrielCpgConfig(),
@@ -412,6 +439,34 @@ class ModelAdaptersConfig:
             return self.adapters[adapter_name][0]
         else:
             return None
+
+    def get_closest_language_adapter(self, language: str):
+        languages = set(
+            adapter_name for adapter_name, type_and_config in self.adapters.items()
+            if type_and_config[0] == AdapterType.text_lang
+        )
+        features = l2v.get_features(
+            list(languages | {language}),
+            'syntax_knn+phonology_knn+inventory_knn'
+        )
+        feature_vectors = {
+            lang: np.array(vec)
+            for lang, vec in features.items()
+            if lang in languages
+        }
+        lang_vector = np.array(features[language])
+
+        closest_language = None
+        greatest_similarity = -1.0
+        for lang, vec in feature_vectors.items():
+            cosine_similarity = np.dot(lang_vector, vec)
+            cosine_similarity /= np.linalg.norm(lang_vector)
+            cosine_similarity /= np.linalg.norm(vec)
+            if cosine_similarity > greatest_similarity:
+                closest_language = lang
+                greatest_similarity = cosine_similarity
+
+        return closest_language
 
     def get(self, adapter_name: str, return_type: bool = False):
         """Gets the config dictionary for a given adapter.

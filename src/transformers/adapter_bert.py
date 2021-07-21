@@ -83,6 +83,7 @@ class BertSelfOutputAdaptersMixin:
         logging.info(list(self.attention_text_lang_adapters.keys()))
         if adapter_name in self.attention_text_lang_adapters:
             self.attention_text_lang_adapters[adapter_name].decontextualise(context_embedding)
+        self.config.adapters.get(adapter_name)['cpg'] = None
 
     def add_fusion_layer(self, adapter_names):
         """See BertModel.add_attention_layer"""

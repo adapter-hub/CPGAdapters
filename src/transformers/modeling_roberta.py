@@ -194,6 +194,7 @@ class RobertaModelWithHeads(BertModelHeadsMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
         head=None,
     ):
         input_ids = input_ids.view(-1, input_ids.size(-1)) if input_ids is not None else None
@@ -248,6 +249,7 @@ class RobertaForMaskedLM(ModelWithHeadsAdaptersMixin, BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
         **kwargs
     ):
         r"""
@@ -378,6 +380,7 @@ class RobertaForSequenceClassification(ModelWithHeadsAdaptersMixin, BertPreTrain
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
@@ -464,6 +467,7 @@ class RobertaForMultipleChoice(ModelWithHeadsAdaptersMixin, BertPreTrainedModel)
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
@@ -563,6 +567,7 @@ class RobertaForTokenClassification(ModelWithHeadsAdaptersMixin, BertPreTrainedM
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`, defaults to :obj:`None`):
@@ -676,6 +681,7 @@ class RobertaForQuestionAnswering(ModelWithHeadsAdaptersMixin, BertPreTrainedMod
         output_attentions=None,
         output_hidden_states=None,
         adapter_names=None,
+        language=None,
     ):
         r"""
         start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`, defaults to :obj:`None`):
